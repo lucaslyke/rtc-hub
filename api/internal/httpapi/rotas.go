@@ -58,6 +58,7 @@ func (s *Servidor) Rotas() http.Handler {
 		"PATCH /itens/{id}":                   s.atualizarItem,
 		"POST /clientes/{id}/itens/confirmar": s.confirmar,
 		"POST /clientes/{id}/calcular":        s.calcular,
+		"GET /clientes/{id}/exportar.xlsx":    s.exportar,
 		"GET /aliquotas":                      s.obterAliquotas,
 		"PUT /aliquotas":                      s.salvarAliquotas,
 	}

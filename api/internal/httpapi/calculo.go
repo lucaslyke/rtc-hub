@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"rtchub/internal/exporta"
 	"rtchub/internal/motores"
 	"rtchub/internal/store"
 )
@@ -94,4 +96,39 @@ func (s *Servidor) calcular(w http.ResponseWriter, r *http.Request, uid string) 
 	}
 	responder(w, 200, map[string]any{"resultados": rs, "pendentes": pendentes})
 	return nil
+}
+
+func (s *Servidor) exportar(w http.ResponseWriter, r *http.Request, uid string) error {
+	cid, err := id(r)
+	if err != nil {
+		return err
+	}
+	ano, err := strconv.Atoi(r.URL.Query().Get("ano"))
+	if err != nil || ano < 2026 || ano > 2033 {
+		return falha(http.StatusBadRequest, "Informe um ano entre 2026 e 2033.")
+	}
+	var cli store.Cliente
+	var al store.AliquotasEst
+	var its []store.Item
+	err = s.tx(r, uid, func(tx pgx.Tx) (err error) {
+		if cli, err = store.ObterCliente(r.Context(), tx, cid); err != nil {
+			return err
+		}
+		if al, err = store.Aliquotas(r.Context(), tx); err != nil {
+			return err
+		}
+		its, err = store.ListarItens(r.Context(), tx, cid)
+		return
+	})
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	if err := exporta.Cadastro(&buf, cli, its, ano, motores.Aliquotas(al)); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", `attachment; filename="cadastro-`+cli.CNPJ+"-"+strconv.Itoa(ano)+`.xlsx"`)
+	_, err = w.Write(buf.Bytes())
+	return err
 }
