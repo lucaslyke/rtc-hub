@@ -51,15 +51,21 @@ function Tela() {
     return `${r.confirmados} ${r.confirmados === 1 ? "item confirmado" : "itens confirmados"}.`;
   });
 
+  const escolherIS = (i: Item, o: Opcao | null) => acao("escolher", async () => {
+    await api(`/itens/${i.id}`, { method: "PATCH", body: JSON.stringify({ cst: i.cst, cClassTrib: i.cClassTrib, isCst: o?.cst ?? "", isCClassTrib: o?.cClassTrib ?? "" }) });
+  });
+
   const escolher = (i: Item, o: Opcao) => acao("escolher", async () => {
     const nbs = nbsDaOpcao(o);
     await api(`/itens/${i.id}`, { method: "PATCH", body: JSON.stringify({ cst: o.cst, cClassTrib: o.cClassTrib, isCst: i.isCst, isCClassTrib: i.isCClassTrib, ...(nbs && { nbs }) }) });
   });
 
   const calcular = () => acao("calcular", async () => {
-    const r = await api<{ resultados: unknown[]; pendentes: Item[] }>(`/clientes/${id}/calcular`, { method: "POST", body: JSON.stringify({ ano }) });
-    const n = r.pendentes.length;
-    return `${r.resultados.length} ${r.resultados.length === 1 ? "item calculado" : "itens calculados"} para ${ano}.` +
+    const r = await api<{ resultados: { estado: string }[]; pendentes: Item[] }>(`/clientes/${id}/calcular`, { method: "POST", body: JSON.stringify({ ano }) });
+    const ok = r.resultados.filter((x) => x.estado === "CALCULADO" || x.estado === "CALCULO_SIMULADO").length;
+    const falhas = r.resultados.length - ok, n = r.pendentes.length;
+    return `${ok} ${ok === 1 ? "item calculado" : "itens calculados"} para ${ano}.` +
+      (falhas ? ` ${falhas} com erro (veja a coluna Valores).` : "") +
       (n ? ` ${n} ${n === 1 ? "item ficou" : "itens ficaram"} de fora: confirme ou revise a classificação antes de calcular.` : "");
   });
 
@@ -73,7 +79,12 @@ function Tela() {
 
   return (
     <>
-      <Titulo acao={<Link href={`/clientes/${id}/importar`} className="rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white hover:bg-teal-900">Importar arquivos</Link>}>
+      <Titulo acao={
+        <div className="flex items-center gap-4">
+          <Link href={`/clientes/${id}/editar`} className="text-sm text-teal-800 hover:underline">Editar cliente</Link>
+          <Link href={`/clientes/${id}/importar`} className="rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white hover:bg-teal-900">Importar arquivos</Link>
+        </div>
+      }>
         {cliente?.razaoSocial ?? "Cliente"}
         {cliente && <span className="ml-3 text-sm font-normal text-slate-500">{cliente.regime === "simples" ? "Simples Nacional" : "Regime regular"}</span>}
       </Titulo>
@@ -81,7 +92,7 @@ function Tela() {
       <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar por situação">
           {filtros.map(([s, nome, n]) => (
-            <button key={s} onClick={() => setFiltro(s)} aria-pressed={filtro === s}
+            <button key={s} onClick={() => { setFiltro(s); setSel(new Set()); }} aria-pressed={filtro === s}
               className={`rounded-full px-3 py-1 text-sm ring-1 ${filtro === s ? "bg-teal-800 text-white ring-teal-800" : "bg-white text-slate-700 ring-slate-300 hover:bg-slate-50"}`}>
               {nome} <span className="tabular-nums opacity-75">({n})</span>
             </button>
@@ -119,7 +130,7 @@ function Tela() {
         <Cartao><p className="text-sm text-slate-600">{total === 0 ? "Nenhum item ainda. Importe as notas ou a planilha de produtos do cliente." : "Nenhum item nesta situação."}</p></Cartao>
       )}
       {itens && itens.length > 0 && (
-        <TabelaItens itens={itens} ano={ano} selecionados={sel} onEscolher={escolher}
+        <TabelaItens itens={itens} ano={ano} regime={cliente?.regime ?? ""} selecionados={sel} ocupado={!!ocupado} onEscolher={escolher} onEscolherIS={escolherIS}
           onSelecionar={(ids, marcar) => setSel((s) => { const n = new Set(s); ids.forEach((i) => (marcar ? n.add(i) : n.delete(i))); return n; })} />
       )}
     </>

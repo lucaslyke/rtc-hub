@@ -21,10 +21,12 @@ export default function Aliquotas() {
   async function salvar(e: FormEvent) {
     e.preventDefault();
     if (!v) return;
-    setErro("");
     setSalvo(false);
+    const nums = Object.fromEntries(campos.map(([k]) => [k, v[k].trim() === "" ? NaN : Number(v[k].replace(",", "."))]));
+    if (!Object.values(nums).every(Number.isFinite)) return setErro("Informe todas as alíquotas como número (ex.: 8,8).");
+    setErro("");
     try {
-      await api("/aliquotas", { method: "PUT", body: JSON.stringify(Object.fromEntries(campos.map(([k]) => [k, Number(v[k].replace(",", "."))]))) });
+      await api("/aliquotas", { method: "PUT", body: JSON.stringify(nums) });
       setSalvo(true);
     } catch (err) {
       setErro((err as Error).message);

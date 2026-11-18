@@ -32,6 +32,10 @@ test("importar, confirmar, calcular 2027 e exportar", async ({ page }) => {
   await expect(arroz).toContainText("Revisar");
   await expect(carne).toContainText("Provável (confirmar)");
 
+  // a sugestão provável pode ser trocada pelo contador, não só aprovada
+  await expect(carne.getByLabel("Classificação de Carne bovina resfriada")).toContainText("Trocar a classificação…");
+  await expect(carne.getByLabel("Classificação de Carne bovina resfriada")).toContainText("redução 100%");
+
   await carne.getByRole("checkbox").check();
   await page.getByRole("button", { name: /Confirmar selecionados/ }).click();
   await expect(carne).toContainText("Pronto");
@@ -39,6 +43,8 @@ test("importar, confirmar, calcular 2027 e exportar", async ({ page }) => {
   await expect(page.getByLabel("Ano")).toHaveValue("2027");
   await page.getByRole("button", { name: "Calcular" }).click();
   await expect(carne.getByText("simulação")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("status")).toContainText("1 item calculado para 2027.");
+  await expect(carne.getByText("memória de cálculo")).toBeVisible();
 
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Exportar XLSX" }).click();

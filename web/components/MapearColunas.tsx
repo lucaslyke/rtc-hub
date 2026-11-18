@@ -5,7 +5,7 @@ export type Mapeamento = { descricao: number; codigo: number; ncm: number; nbs: 
 
 const CAMPOS: [keyof Mapeamento, string, RegExp][] = [
   ["descricao", "Descrição do produto ou serviço", /descri|produto|nome/],
-  ["valor", "Valor", /valor|pre[cç]o/],
+  ["valor", "Valor (opcional)", /valor|pre[cç]o/],
   ["ncm", "NCM", /ncm/],
   ["nbs", "NBS", /nbs/],
   ["codigo", "Código do item", /c[oó]d/],
@@ -20,7 +20,6 @@ export function sugerirMapeamento(cabecalho: string[]): Mapeamento {
 
 export function faltando(m: Mapeamento) {
   if (m.descricao < 0) return "Escolha a coluna da descrição.";
-  if (m.valor < 0) return "Escolha a coluna do valor.";
   if (m.ncm < 0 && m.nbs < 0) return "Escolha a coluna de NCM ou a de NBS (ao menos uma).";
   return "";
 }
