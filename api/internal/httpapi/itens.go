@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"rtchub/internal/store"
+	"rtchub/internal/tabelas"
 )
 
 var (
@@ -56,6 +57,7 @@ func (s *Servidor) atualizarItem(w http.ResponseWriter, r *http.Request, uid str
 		CClassTrib   string `json:"cClassTrib"`
 		ISCST        string `json:"isCst"`
 		ISCClassTrib string `json:"isCClassTrib"`
+		NBS          string `json:"nbs"` // só vale para serviço que veio sem NCM e sem NBS
 	}
 	if err := lerJSON(r, &in); err != nil {
 		return err
@@ -65,10 +67,22 @@ func (s *Servidor) atualizarItem(w http.ResponseWriter, r *http.Request, uid str
 		!isVazio && (!reCST.MatchString(in.ISCST) || !reCClassTrib.MatchString(in.ISCClassTrib)) {
 		return falha(http.StatusBadRequest, "CST deve ter 3 dígitos e cClassTrib 6 dígitos.")
 	}
+	in.NBS = tabelas.NormalizaCodigo(in.NBS)
+	if in.NBS != "" && (len(in.NBS) != 9 || !reDigito.MatchString(in.NBS)) {
+		return falha(http.StatusBadRequest, "NBS deve ter 9 dígitos.")
+	}
 	var it store.Item
 	err = s.tx(r, uid, func(tx pgx.Tx) error {
 		if err := store.AtualizarItem(r.Context(), tx, iid, in.CST, in.CClassTrib, in.ISCST, in.ISCClassTrib); err != nil {
 			return err
+		}
+		if in.NBS != "" {
+			if err := store.DefinirNBS(r.Context(), tx, iid, in.NBS); err != nil {
+				if unico(err) {
+					return falha(http.StatusConflict, "Já existe um item com esse código e essa NBS neste cliente.")
+				}
+				return err
+			}
 		}
 		it, err = store.ObterItem(r.Context(), tx, iid)
 		return err
@@ -81,7 +95,8 @@ func (s *Servidor) atualizarItem(w http.ResponseWriter, r *http.Request, uid str
 }
 
 func (s *Servidor) confirmar(w http.ResponseWriter, r *http.Request, uid string) error {
-	if _, err := id(r); err != nil {
+	cid, err := id(r)
+	if err != nil {
 		return err
 	}
 	var in struct {
@@ -99,8 +114,8 @@ func (s *Servidor) confirmar(w http.ResponseWriter, r *http.Request, uid string)
 		}
 	}
 	var n int64
-	err := s.tx(r, uid, func(tx pgx.Tx) (err error) {
-		n, err = store.ConfirmarItens(r.Context(), tx, in.IDs)
+	err = s.tx(r, uid, func(tx pgx.Tx) (err error) {
+		n, err = store.ConfirmarItens(r.Context(), tx, cid, in.IDs)
 		return
 	})
 	if err != nil {

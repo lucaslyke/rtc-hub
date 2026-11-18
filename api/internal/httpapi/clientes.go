@@ -51,19 +51,38 @@ func lerCliente(r *http.Request) (store.Cliente, error) {
 	return c, nil
 }
 
-func cnpjDuplicado(err error) error {
+func unico(err error) bool {
 	var pe *pgconn.PgError
-	if errors.As(err, &pe) && pe.Code == "23505" {
+	return errors.As(err, &pe) && pe.Code == "23505"
+}
+
+func cnpjDuplicado(err error) error {
+	if unico(err) {
 		return falha(http.StatusConflict, "Já existe um cliente com este CNPJ.")
 	}
 	return err
 }
 
+type clienteComContagem struct {
+	store.Cliente
+	Contagem map[string]int `json:"contagem"`
+}
+
 func (s *Servidor) listarClientes(w http.ResponseWriter, r *http.Request, uid string) error {
-	cs := []store.Cliente{}
+	cs := []clienteComContagem{}
 	err := s.tx(r, uid, func(tx pgx.Tx) error {
 		l, err := store.ListarClientes(r.Context(), tx)
-		cs = append(cs, l...)
+		if err != nil {
+			return err
+		}
+		cont, err := store.ContagemPorSituacao(r.Context(), tx)
+		for _, c := range l {
+			n := map[string]int{"ok": 0, "provavel": 0, "revisar": 0, "invalido": 0}
+			for sit, q := range cont[c.ID] {
+				n[sit] = q
+			}
+			cs = append(cs, clienteComContagem{c, n})
+		}
 		return err
 	})
 	if err != nil {

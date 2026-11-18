@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Token real do Supabase local (login anônimo) validado pelas chaves do JWKS.
@@ -29,6 +31,14 @@ func TestJWKSDoSupabase(t *testing.T) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil || sess.AccessToken == "" {
 		t.Fatalf("login anônimo: %d %v", resp.StatusCode, err)
+	}
+	if db := os.Getenv("SUPABASE_DB_URL"); db != "" {
+		t.Cleanup(func() {
+			if conn, err := pgx.Connect(context.Background(), db); err == nil {
+				conn.Exec(context.Background(), `delete from auth.users where id=$1`, sess.User.ID)
+				conn.Close(context.Background())
+			}
+		})
 	}
 	kf, err := JWKS(context.Background(), url)
 	if err != nil {

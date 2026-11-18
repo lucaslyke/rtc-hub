@@ -27,10 +27,13 @@ type resultadoImportacao struct {
 	Ignorados        []importa.Ignorado `json:"ignorados"`
 }
 
-// opcoes é o que vai para itens.opcoes: as escolhas possíveis de IBS/CBS e de IS.
-type opcoes struct {
-	IBSCBS []tabelas.Opcao `json:"ibsCbs"`
-	IS     []tabelas.Opcao `json:"is,omitempty"`
+// opcoesJSON é o formato único de itens.opcoes: {"ibsCbs":[Opcao...],"is":[Opcao...]}, listas nunca null.
+func opcoesJSON(ibsCbs, is []tabelas.Opcao) json.RawMessage {
+	b, _ := json.Marshal(struct {
+		IBSCBS []tabelas.Opcao `json:"ibsCbs"`
+		IS     []tabelas.Opcao `json:"is"`
+	}{append([]tabelas.Opcao{}, ibsCbs...), append([]tabelas.Opcao{}, is...)})
+	return b
 }
 
 func planilha(nome string) bool {
@@ -56,6 +59,10 @@ func (s *Servidor) importar(w http.ResponseWriter, r *http.Request, uid string) 
 	if err != nil {
 		return err
 	}
+	var cli store.Cliente
+	if err := s.tx(r, uid, func(tx pgx.Tx) (err error) { cli, err = store.ObterCliente(r.Context(), tx, cid); return }); err != nil {
+		return err
+	}
 	if err := lerMultipart(w, r); err != nil {
 		return err
 	}
@@ -63,10 +70,6 @@ func (s *Servidor) importar(w http.ResponseWriter, r *http.Request, uid string) 
 	arquivos := r.MultipartForm.File["arquivos[]"]
 	if len(arquivos) == 0 {
 		return falha(http.StatusBadRequest, "Nenhum arquivo enviado.")
-	}
-	var cli store.Cliente
-	if err := s.tx(r, uid, func(tx pgx.Tx) (err error) { cli, err = store.ObterCliente(r.Context(), tx, cid); return }); err != nil {
-		return err
 	}
 
 	res := resultadoImportacao{Ignorados: []importa.Ignorado{}}
@@ -181,24 +184,25 @@ func (s *Servidor) sugerir(ctx context.Context, b importa.ItemBruto, data string
 		return store.ItemEntrada{}, err
 	}
 	e := store.ItemEntrada{Situacao: string(sg.Situacao), Condicao: sg.Motivo}
-	op := opcoes{IBSCBS: sg.IBSCBS.Opcoes}
+	var is []tabelas.Opcao
 	if esc := sg.IBSCBS.Escolhida; esc != nil {
 		e.CST, e.CClassTrib = esc.CST, esc.CClassTrib
 	}
 	if sg.IS != nil {
-		op.IS = sg.IS.Opcoes
+		is = sg.IS.Opcoes
 		if esc := sg.IS.Escolhida; esc != nil {
 			e.ISCST, e.ISCClassTrib, e.Condicao = esc.CST, esc.CClassTrib, esc.Condicao
 		}
 	}
-	e.Opcoes, err = json.Marshal(op)
-	return e, err
+	e.Opcoes = opcoesJSON(sg.IBSCBS.Opcoes, is)
+	return e, nil
 }
 
-// sugerirServico: NFS-e sem NBS → opções de todas as NBS que a Receita liga ao cTribNac.
+// sugerirServico: NFS-e sem NBS → opções de todas as NBS que a Receita liga ao cTribNac; a descrição
+// de cada opção começa com "NBS <código> — " para a UI mandar essa NBS no PATCH.
 // shortcut: ignora as opções de IS das NBS candidatas (serviços não têm IS hoje); somar se a Receita incluir.
 func (s *Servidor) sugerirServico(ctx context.Context, cTribNac, data string) (store.ItemEntrada, error) {
-	invalido := store.ItemEntrada{Situacao: string(tabelas.Invalido), Condicao: semNBS}
+	invalido := store.ItemEntrada{Situacao: string(tabelas.Invalido), Condicao: semNBS, Opcoes: opcoesJSON(nil, nil)}
 	c := tabelas.NormalizaCodigo(cTribNac)
 	if len(c) != 6 || !reDigito.MatchString(c) {
 		return invalido, nil
@@ -207,29 +211,29 @@ func (s *Servidor) sugerirServico(ctx context.Context, cTribNac, data string) (s
 	if err != nil {
 		return store.ItemEntrada{}, err
 	}
-	var op opcoes
-	visto := map[string]bool{}
+	var ops []tabelas.Opcao // sem deduplicar entre NBS: o mesmo cClassTrib em NBS diferentes são escolhas diferentes
 	for _, n := range nbs {
 		sg, err := s.Tabelas.Sugerir(ctx, tabelas.NBS, n, data)
 		if err != nil {
 			return store.ItemEntrada{}, err
 		}
 		for _, o := range sg.IBSCBS.Opcoes {
-			if !visto[o.CClassTrib] {
-				visto[o.CClassTrib] = true
-				op.IBSCBS = append(op.IBSCBS, o)
-			}
+			o.Descricao = "NBS " + n + " — " + o.Descricao
+			ops = append(ops, o)
 		}
 	}
-	if len(op.IBSCBS) == 0 {
+	if len(ops) == 0 {
 		return invalido, nil
 	}
-	b, err := json.Marshal(op)
-	return store.ItemEntrada{Situacao: string(tabelas.Revisar), Opcoes: b}, err
+	return store.ItemEntrada{Situacao: string(tabelas.Revisar), Opcoes: opcoesJSON(ops, nil)}, nil
 }
 
 func (s *Servidor) previa(w http.ResponseWriter, r *http.Request, uid string) error {
-	if _, err := id(r); err != nil {
+	cid, err := id(r)
+	if err != nil {
+		return err
+	}
+	if err := s.tx(r, uid, func(tx pgx.Tx) error { _, err := store.ObterCliente(r.Context(), tx, cid); return err }); err != nil {
 		return err
 	}
 	if err := lerMultipart(w, r); err != nil {

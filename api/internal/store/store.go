@@ -195,10 +195,10 @@ func AtualizarItem(ctx context.Context, tx pgx.Tx, id, cst, cClassTrib, isCST, i
 	return err
 }
 
-// ConfirmarItens aprova em lote só os 'provavel' ainda 'sugerido'; devolve quantos mudaram.
-func ConfirmarItens(ctx context.Context, tx pgx.Tx, ids []string) (int64, error) {
+// ConfirmarItens aprova em lote só os 'provavel' ainda 'sugerido' do cliente; devolve quantos mudaram.
+func ConfirmarItens(ctx context.Context, tx pgx.Tx, clienteID string, ids []string) (int64, error) {
 	tag, err := tx.Exec(ctx, `update itens set origem='confirmado', situacao='ok', atualizado_em=now()
-		where id = any($1::uuid[]) and origem='sugerido' and situacao='provavel'`, ids)
+		where id = any($1::uuid[]) and cliente_id=$2 and origem='sugerido' and situacao='provavel'`, ids, clienteID)
 	return tag.RowsAffected(), err
 }
 
@@ -270,4 +270,32 @@ func RegistrarImportacao(ctx context.Context, tx pgx.Tx, clienteID, tipo string,
 	_, err = tx.Exec(ctx, `insert into importacoes (cliente_id, tipo, arquivos, itens_novos, itens_atualizados, ignorados)
 		values ($1,$2,$3,$4,$5,$6)`, clienteID, tipo, arquivos, novos, atualizados, string(ign))
 	return err
+}
+
+// DefinirNBS grava a NBS escolhida num serviço que veio sem NCM e sem NBS; nos demais não faz nada.
+func DefinirNBS(ctx context.Context, tx pgx.Tx, id, nbs string) error {
+	_, err := tx.Exec(ctx, `update itens set nbs=$2, atualizado_em=now() where id=$1 and ncm='' and nbs=''`, id, nbs)
+	return err
+}
+
+// ContagemPorSituacao: cliente_id → situação → quantidade de itens.
+func ContagemPorSituacao(ctx context.Context, tx pgx.Tx) (map[string]map[string]int, error) {
+	rows, err := tx.Query(ctx, `select cliente_id, situacao, count(*) from itens group by 1, 2`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]map[string]int{}
+	for rows.Next() {
+		var c, sit string
+		var n int
+		if err := rows.Scan(&c, &sit, &n); err != nil {
+			return nil, err
+		}
+		if out[c] == nil {
+			out[c] = map[string]int{}
+		}
+		out[c][sit] = n
+	}
+	return out, rows.Err()
 }

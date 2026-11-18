@@ -120,7 +120,7 @@ func TestConfirmarEAtualizarItem(t *testing.T) {
 			return err
 		}
 		ids := []string{its[0].ID, its[1].ID}
-		if n, err := ConfirmarItens(ctx, tx, ids); err != nil || n != 1 {
+		if n, err := ConfirmarItens(ctx, tx, c.ID, ids); err != nil || n != 1 {
 			t.Fatalf("confirmar: %d %v", n, err)
 		}
 		its, _ = ListarItens(ctx, tx, c.ID)
@@ -239,6 +239,38 @@ func TestClienteAtualizarExcluirEImportacao(t *testing.T) {
 		}
 		if ok, err := ExcluirCliente(ctx, tx, c.ID); !ok || err != nil {
 			t.Errorf("excluir: %v %v", ok, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDefinirNBSEContagem(t *testing.T) {
+	s, ctx := novoStore(t)
+	u := novoUsuario(t, s, ctx)
+	c := novoCliente(t, s, ctx, u)
+	err := s.ComoUsuario(ctx, u, func(tx pgx.Tx) error {
+		if _, _, err := UpsertItens(ctx, tx, c.ID, []ItemEntrada{
+			{Codigo: "S", CTribNac: "010101", Situacao: "revisar"},
+			{Codigo: "P", NCM: "10063021", Situacao: "provavel"},
+		}); err != nil {
+			return err
+		}
+		its, _ := ListarItens(ctx, tx, c.ID) // P, S
+		for _, i := range its {
+			if err := DefinirNBS(ctx, tx, i.ID, "115022000"); err != nil {
+				return err
+			}
+		}
+		its, _ = ListarItens(ctx, tx, c.ID)
+		if its[0].NBS != "" || its[1].NBS != "115022000" {
+			t.Errorf("nbs: %+v", its)
+		}
+		cont, err := ContagemPorSituacao(ctx, tx)
+		if err != nil || cont[c.ID]["revisar"] != 1 || cont[c.ID]["provavel"] != 1 {
+			t.Errorf("contagem: %v %v", cont, err)
 		}
 		return nil
 	})

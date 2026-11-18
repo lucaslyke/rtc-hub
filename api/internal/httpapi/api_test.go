@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -143,11 +145,15 @@ func (a *ambiente) importarCom(clienteID, mapeamento string, arquivos ...string)
 		mw.WriteField("mapeamento", mapeamento)
 	}
 	for _, nome := range arquivos {
-		b, err := os.ReadFile(testdata + nome)
+		caminho := nome
+		if !filepath.IsAbs(nome) {
+			caminho = testdata + nome
+		}
+		b, err := os.ReadFile(caminho)
 		if err != nil {
 			a.t.Fatal(err)
 		}
-		fw, _ := mw.CreateFormFile("arquivos[]", nome)
+		fw, _ := mw.CreateFormFile("arquivos[]", filepath.Base(nome))
 		fw.Write(b)
 	}
 	mw.Close()
@@ -209,7 +215,7 @@ func TestImportarNFeSugere(t *testing.T) {
 	}
 	l := a.itens(c.ID, "")
 	arroz := porCodigo(l.Itens, "A1")
-	if arroz.Situacao == "" || arroz.CClassTrib == "" && arroz.Situacao != "revisar" {
+	if arroz.Situacao == "" {
 		t.Errorf("arroz sem sugestão: %+v", arroz)
 	}
 	soma := 0
@@ -281,6 +287,13 @@ func TestConfirmarEmLote(t *testing.T) {
 	if st := a.json("POST", "/clientes/"+c.ID+"/itens/confirmar", map[string]any{"ids": []string{ids["P"], ids["R"]}}, &out); st != 200 || out.Confirmados != 1 {
 		t.Fatalf("confirmar: %d %+v", st, out)
 	}
+	// id de outro cliente do mesmo usuário não muda pela rota deste cliente
+	var outro store.Cliente
+	a.json("POST", "/clientes", map[string]any{"razaoSocial": "Outro", "cnpj": "99888777000166", "regime": "regular", "uf": "SP", "municipioIbge": 3550308}, &outro)
+	idsOutro := seed(t, a, outro.ID, store.ItemEntrada{Codigo: "P", NCM: "10063021", Situacao: "provavel", CST: "200", CClassTrib: "200003"})
+	if st := a.json("POST", "/clientes/"+c.ID+"/itens/confirmar", map[string]any{"ids": []string{idsOutro["P"]}}, &out); st != 200 || out.Confirmados != 0 {
+		t.Errorf("confirmou item de outro cliente: %d %+v", st, out)
+	}
 	its := a.itens(c.ID, "").Itens
 	if p := porCodigo(its, "P"); p.Situacao != "ok" || p.Origem != "confirmado" {
 		t.Errorf("P: %+v", p)
@@ -310,11 +323,11 @@ func TestPatchViraManual(t *testing.T) {
 }
 
 func TestCalcularSoItensProntos(t *testing.T) {
-	var recebidos int
+	var recebidos atomic.Int64
 	a := novoAmbiente(t, func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Itens []any }
 		json.NewDecoder(r.Body).Decode(&req)
-		recebidos += len(req.Itens)
+		recebidos.Add(int64(len(req.Itens)))
 		fmt.Fprint(w, `{"objetos":[{"nObj":1,"estadoItem":"CALCULO_SIMULADO","tribCalc":{"IBSCBS":{"gIBSCBS":{"vIBS":"1.00","gCBS":{"vCBS":"2.00"}}}}}]}`)
 	})
 	c := a.cliente("regular")
@@ -328,8 +341,8 @@ func TestCalcularSoItensProntos(t *testing.T) {
 	if st := a.json("POST", "/clientes/"+c.ID+"/calcular", map[string]any{"ano": 2027}, &out); st != 200 {
 		t.Fatalf("calcular: %d", st)
 	}
-	if recebidos != 1 || len(out.Resultados) != 1 || out.Resultados[0].ItemID != ids["OK"] || out.Resultados[0].VCBS != "2.00" {
-		t.Errorf("resultados: %d %+v", recebidos, out.Resultados)
+	if recebidos.Load() != 1 || len(out.Resultados) != 1 || out.Resultados[0].ItemID != ids["OK"] || out.Resultados[0].VCBS != "2.00" {
+		t.Errorf("resultados: %d %+v", recebidos.Load(), out.Resultados)
 	}
 	if len(out.Pendentes) != 1 || out.Pendentes[0].ID != ids["R"] {
 		t.Errorf("pendentes: %+v", out.Pendentes)
@@ -392,5 +405,109 @@ func TestImportarPlanilha(t *testing.T) {
 	it := a.itens(c.ID, "").Itens[0]
 	if it.Descricao != "Pão francês" || it.NBS != "" || it.UltimoValor != 1234.56 || it.Situacao == "" {
 		t.Errorf("item: %+v", it)
+	}
+}
+
+type opcoesLidas struct {
+	IBSCBS []struct {
+		CClassTrib string `json:"cClassTrib"`
+		Descricao  string `json:"descricao"`
+	} `json:"ibsCbs"`
+	IS []any `json:"is"`
+}
+
+func lerOpcoes(t *testing.T, it store.Item) opcoesLidas {
+	var o opcoesLidas
+	if err := json.Unmarshal(it.Opcoes, &o); err != nil || o.IBSCBS == nil || o.IS == nil {
+		t.Fatalf("opcoes fora do formato {ibsCbs:[],is:[]}: %s %v", it.Opcoes, err)
+	}
+	return o
+}
+
+func TestServicoSemNBSEscolheNBSECalcula(t *testing.T) {
+	var corpo atomic.Value
+	a := novoAmbiente(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		corpo.Store(string(b))
+		fmt.Fprint(w, `{"objetos":[{"nObj":1,"estadoItem":"CALCULO_SIMULADO","tribCalc":{}}]}`)
+	})
+	c := a.cliente("regular")
+	a.importar(c.ID, "nfse_sem_nbs.xml")
+	it := a.itens(c.ID, "").Itens[0]
+	o := lerOpcoes(t, it)
+	if len(o.IBSCBS) == 0 || !strings.HasPrefix(o.IBSCBS[0].Descricao, "NBS ") || !strings.Contains(o.IBSCBS[0].Descricao, " — ") {
+		t.Fatalf("opções sem a NBS na descrição: %s", it.Opcoes)
+	}
+	nbs := strings.TrimPrefix(strings.SplitN(o.IBSCBS[0].Descricao, " — ", 2)[0], "NBS ")
+	var got store.Item
+	if st := a.json("PATCH", "/itens/"+it.ID, map[string]any{"cst": "000", "cClassTrib": o.IBSCBS[0].CClassTrib, "nbs": nbs}, &got); st != 200 || got.NBS != tabelas.NormalizaCodigo(nbs) {
+		t.Fatalf("patch nbs: %d %+v", st, got)
+	}
+	if st := a.json("POST", "/clientes/"+c.ID+"/calcular", map[string]any{"ano": 2027}, nil); st != 200 {
+		t.Fatalf("calcular: %d", st)
+	}
+	b, _ := corpo.Load().(string)
+	if !strings.Contains(b, `"nbs":"`+got.NBS+`"`) || strings.Contains(b, `"ncm"`) {
+		t.Errorf("motor recebeu: %s", b)
+	}
+	// num item que já tem NCM a nbs é ignorada
+	ids := seed(t, a, c.ID, store.ItemEntrada{Codigo: "N", NCM: "10063021", Situacao: "revisar"})
+	if st := a.json("PATCH", "/itens/"+ids["N"], map[string]any{"cst": "000", "cClassTrib": "000001", "nbs": nbs}, &got); st != 200 || got.NBS != "" {
+		t.Errorf("nbs gravada em item com NCM: %d %+v", st, got)
+	}
+}
+
+func TestServicoSemCandidatosOpcoesVazias(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	b, _ := os.ReadFile(testdata + "nfse_sem_nbs.xml")
+	arq := filepath.Join(t.TempDir(), "sem_candidato.xml")
+	os.WriteFile(arq, bytes.Replace(b, []byte("<cTribNac>010101<"), []byte("<cTribNac>999999<"), 1), 0o600)
+	if res := a.importar(c.ID, arq); res.ItensNovos != 1 {
+		t.Fatalf("importação: %+v", res)
+	}
+	it := a.itens(c.ID, "").Itens[0]
+	if o := lerOpcoes(t, it); it.Situacao != "invalido" || len(o.IBSCBS) != 0 || it.Condicao != "Serviço sem NBS e sem correspondência na tabela da Receita" {
+		t.Errorf("sem candidatos: %+v %s", it, it.Opcoes)
+	}
+}
+
+func TestOpcoesNFeFormatoUnico(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	a.importar(c.ID, "nfe_saida.xml")
+	for _, it := range a.itens(c.ID, "").Itens {
+		lerOpcoes(t, it)
+	}
+}
+
+func TestListarClientesComContagem(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	seed(t, a, c.ID, store.ItemEntrada{Codigo: "P", NCM: "10063021", Situacao: "provavel"},
+		store.ItemEntrada{Codigo: "R", NCM: "22030000", Situacao: "revisar"})
+	var cs []struct {
+		ID       string         `json:"id"`
+		Contagem map[string]int `json:"contagem"`
+	}
+	if st := a.req("GET", "/clientes", "", nil, &cs); st != 200 || len(cs) != 1 {
+		t.Fatalf("listar: %d %+v", st, cs)
+	}
+	want := map[string]int{"ok": 0, "provavel": 1, "revisar": 1, "invalido": 0}
+	if fmt.Sprint(cs[0].Contagem) != fmt.Sprint(want) {
+		t.Errorf("contagem = %v, quer %v", cs[0].Contagem, want)
+	}
+}
+
+func TestImportarAcimaDe50MBDa413(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("arquivos[]", "grande.xml")
+	fw.Write(bytes.Repeat([]byte("x"), 50<<20+1))
+	mw.Close()
+	if st := a.req("POST", "/clientes/"+c.ID+"/importar", mw.FormDataContentType(), &buf, nil); st != 413 {
+		t.Errorf("status %d, quer 413", st)
 	}
 }
