@@ -17,7 +17,7 @@ Ou seja: o cadastro de produtos de **cada cliente** do escritório tem que ser r
 - **Lê o que o cliente já tem**: os XMLs das notas (NF-e, NFC-e, NFS-e nacional, soltos ou em ZIP) ou a planilha de produtos (CSV ou XLSX). Cada item aparece uma vez só, com quantas vezes saiu nas notas e o último valor.
 - **Sugere a classificação** de cada item pelo NCM (produtos) ou pela NBS (serviços), usando as tabelas oficiais da Receita, e mostra o porquê: o artigo da lei, o anexo e o percentual de redução.
 - **Separa o que precisa da sua atenção**:
-  - ✓ **Pronto** — só há uma classificação possível;
+  - ✓ **Pronto** — nenhum tratamento especial para esse NCM/NBS nas tabelas oficiais (tributação integral), ou classificação já confirmada por você.
   - ? **Provável** — há uma classificação especial que provavelmente se aplica; você confirma em lote;
   - ⚠ **Revisar** — há mais de uma possibilidade; você escolhe na lista;
   - ✗ **Inválido** — NCM/NBS inexistente ou incompleto.
@@ -38,7 +38,7 @@ O botão **Entrar como demo** cria uma sessão anônima, sem cadastro, com um es
 
 | Cliente | Regime | O que mostra |
 |---|---|---|
-| Padaria Pão Quente | Simples Nacional | cesta básica com redução de 100%, Imposto Seletivo em refrigerante, cerveja e cigarro |
+| Padaria Pão Quente | Simples Nacional | cesta básica com redução de 100%, Imposto Seletivo identificado em refrigerante, cerveja e cigarro (não incide na revenda; o contador decide) |
 | Farmácia Saúde | Regular (SP) | medicamentos e dispositivos médicos para revisar, higiene pessoal com redução, cosméticos com tributação integral |
 | Escola Aprender | Regular (SP) | serviços de educação por NBS (redução de 60%), uma NFS-e sem NBS para revisar, livros e uniformes |
 

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -33,14 +34,35 @@ func contar(t *testing.T, s *Store, ctx context.Context, u string) (cl, it, calc
 	return
 }
 
+// clonarDemo chama clonar_demo com o claim is_anonymous que o Supabase põe no JWT da sessão anônima.
+func clonarDemo(t *testing.T, s *Store, ctx context.Context, u string, anonimo bool) {
+	t.Helper()
+	claims := fmt.Sprintf(`{"sub":%q,"role":"authenticated","is_anonymous":%t}`, u, anonimo)
+	err := s.ComoUsuario(ctx, u, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `select set_config('request.jwt.claims', $1, true)`, claims); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `select clonar_demo()`)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClonarDemoSoParaAnonimo(t *testing.T) {
+	s, ctx := novoStore(t)
+	u := novoUsuario(t, s, ctx)
+	clonarDemo(t, s, ctx, u, false)
+	if cl, it, _, _ := contar(t, s, ctx, u); cl != 0 || it != 0 {
+		t.Errorf("usuário com conta recebeu a demo: %d clientes, %d itens", cl, it)
+	}
+}
+
 func TestClonarDemoIdempotente(t *testing.T) {
 	s, ctx := novoStore(t)
 	a, b := novoAnonimo(t, s, ctx), novoAnonimo(t, s, ctx)
-	clonar := func(u string) {
-		if err := s.ComoUsuario(ctx, u, func(tx pgx.Tx) error { _, err := tx.Exec(ctx, `select clonar_demo()`); return err }); err != nil {
-			t.Fatal(err)
-		}
-	}
+	clonar := func(u string) { clonarDemo(t, s, ctx, u, true) }
 	clonar(a)
 	clonar(a)
 	cl, it, calc, al := contar(t, s, ctx, a)
