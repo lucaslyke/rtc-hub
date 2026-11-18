@@ -35,6 +35,7 @@ type Resultado struct {
 	PRedCBS   string          `json:"pRedCbs"`
 	PRedIBS   string          `json:"pRedIbs"`
 	Mensagem  string          `json:"mensagem"`
+	Memoria   string          `json:"memoria,omitempty"` // memória de cálculo da CBS, texto do motor
 	Bruto     json.RawMessage `json:"bruto,omitempty"`
 }
 

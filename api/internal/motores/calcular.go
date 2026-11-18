@@ -10,7 +10,7 @@ import (
 const lote = 100
 
 type resp struct {
-	Objetos []objeto `json:"objetos"`
+	Objetos []json.RawMessage `json:"objetos"`
 }
 
 type objeto struct {
@@ -128,18 +128,24 @@ func mapear(raw []byte, itens []ItemCalc, sim bool, ext func(map[string]any) (st
 	for i, it := range itens {
 		out[i] = Resultado{ItemID: it.ID, Estado: "SEM_RESPOSTA", Simulacao: sim}
 	}
-	for _, o := range r.Objetos {
-		if o.NObj < 1 || o.NObj > len(itens) {
+	for _, bruto := range r.Objetos {
+		var o objeto
+		if json.Unmarshal(bruto, &o) != nil || o.NObj < 1 || o.NObj > len(itens) {
 			continue
 		}
 		x := &out[o.NObj-1]
-		x.Estado, x.Bruto = o.EstadoItem, raw
+		x.Estado, x.Bruto = o.EstadoItem, bruto // só o objeto deste item, não o lote inteiro
 		if len(o.Erros) > 0 {
-			x.Mensagem = strings.TrimSpace(o.Erros[0].Title + ": " + o.Erros[0].Detail)
+			e := o.Erros[0]
+			x.Mensagem = strings.TrimSpace(e.Title + ": " + e.Detail)
+			if strings.HasPrefix(e.Detail, e.Title) {
+				x.Mensagem = e.Detail
+			}
 		}
 		var tc map[string]any
 		json.Unmarshal(o.TribCalc, &tc)
 		x.VCBS, x.VIBS, x.VIS, x.PRedCBS, x.PRedIBS = ext(tc)
+		x.Memoria = str(sub(sub(sub(tc, "IBSCBS"), "gIBSCBS"), "gCBS")["memoriaCalculo"]) // só o regime regular devolve
 	}
 	return out, nil
 }

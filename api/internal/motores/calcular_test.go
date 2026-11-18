@@ -110,3 +110,25 @@ func TestErroPorItem(t *testing.T) {
 		t.Fatalf("%+v", r[3])
 	}
 }
+
+func TestBrutoSoDoItemEMemoria(t *testing.T) {
+	s, _, _ := srv(t, "regular-resposta.json")
+	r, _ := Novo(s.URL, "", nil).Calcular(context.Background(), 2027, regCli, al, itens4)
+	if b := string(r[1].Bruto); !strings.HasPrefix(b, `{"nObj":2,`) || strings.Contains(b, `"nObj":1,`) {
+		t.Fatalf("bruto: %.200s", r[1].Bruto)
+	}
+	if !strings.Contains(r[1].Memoria, "alíquota de 8.800000%") {
+		t.Fatalf("memoria: %q", r[1].Memoria)
+	}
+}
+
+func TestMensagemSemTituloRepetido(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"objetos":[{"nObj":1,"estadoItem":"ERRO","erros":[{"title":"NCM inválida","detail":"NCM inválida: 123"}]}]}`))
+	}))
+	defer s.Close()
+	r, _ := Novo(s.URL, "", nil).Calcular(context.Background(), 2027, regCli, al, itens4[:1])
+	if r[0].Mensagem != "NCM inválida: 123" {
+		t.Fatalf("%q", r[0].Mensagem)
+	}
+}
