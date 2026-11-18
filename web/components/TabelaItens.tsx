@@ -136,7 +136,7 @@ export default function TabelaItens({ itens, ano, regime, selecionados, onSeleci
                       onChange={(e) => onSelecionar([i.id], e.target.checked)} />
                   )}
                 </td>
-                <td className="px-3 py-3">
+                <td className="min-w-40 px-3 py-3">
                   <p className="font-medium text-slate-900">{i.descricao || "(sem descrição)"}</p>
                   <p className="text-xs tabular-nums text-slate-500">
                     {[i.codigo && i.codigo !== i.descricao && `Cód. ${i.codigo}`, i.ncm && `NCM ${i.ncm}`, i.nbs && `NBS ${i.nbs}`, !i.ncm && !i.nbs && i.cTribNac && `Serviço ${i.cTribNac}`, reais(i.ultimoValor)].filter(Boolean).join(" · ")}
@@ -145,7 +145,7 @@ export default function TabelaItens({ itens, ano, regime, selecionados, onSeleci
                 <td className="whitespace-nowrap px-3 py-3">
                   <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${s.cor}`}>{s.icone} {s.rotulo}</span>
                 </td>
-                <td className="px-3 py-3"><PorQue item={i} {...acoes} /></td>
+                <td className="min-w-72 px-3 py-3"><PorQue item={i} {...acoes} /></td>
                 <td className="whitespace-nowrap px-3 py-3"><Valores c={i.calculos?.[String(ano)]} ano={ano} pronto={i.situacao === "ok"} /></td>
               </tr>
             );
