@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/csv"
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -27,7 +28,7 @@ func lerLinhas(nome string, r io.Reader) ([][]string, error) {
 			return nil, err
 		}
 		defer f.Close()
-		return f.GetRows(f.GetSheetName(0)) // primeira aba
+		return f.GetRows(f.GetSheetName(0), excelize.Options{RawCellValue: true}) // primeira aba
 	}
 	b, err := io.ReadAll(r)
 	if err != nil {
@@ -62,13 +63,19 @@ func PreviaPlanilha(nome string, r io.Reader) (Previa, error) {
 	return p, nil
 }
 
-func parseValor(s string) float64 {
-	s = strings.TrimSpace(s)
-	if strings.Contains(s, ",") { // formato BR: 1.234,56
+var milharBR = regexp.MustCompile(`^\d{1,3}(\.\d{3})+$`)
+
+// parseValor: vazio = 0; sem vírgula, "1.234"/"1.234.567" são milhares BR; senão ponto decimal.
+func parseValor(s string) (float64, bool) {
+	s = strings.NewReplacer("R$", "", " ", "", "\u00a0", "").Replace(s)
+	if s == "" {
+		return 0, true
+	}
+	if strings.Contains(s, ",") || milharBR.MatchString(s) {
 		s = strings.ReplaceAll(strings.ReplaceAll(s, ".", ""), ",", ".")
 	}
-	v, _ := strconv.ParseFloat(s, 64)
-	return v
+	v, err := strconv.ParseFloat(s, 64)
+	return v, err == nil
 }
 
 func LerPlanilha(nome string, r io.Reader, m Mapeamento) ([]ItemBruto, []Ignorado, error) {
@@ -85,13 +92,19 @@ func LerPlanilha(nome string, r io.Reader, m Mapeamento) ([]ItemBruto, []Ignorad
 			}
 			return strings.TrimSpace(row[c])
 		}
-		it := ItemBruto{Codigo: col(m.Codigo), Descricao: col(m.Descricao), NCM: col(m.NCM), NBS: col(m.NBS), Valor: parseValor(col(m.Valor)), Origem: "planilha"}
+		it := ItemBruto{Codigo: col(m.Codigo), Descricao: col(m.Descricao), NCM: col(m.NCM), NBS: col(m.NBS), Origem: "planilha"}
 		if it.NCM == "" && it.NBS == "" {
-			if strings.Join(row, "") != "" { // linha totalmente vazia não é item
+			if strings.TrimSpace(strings.Join(row, "")) != "" { // linha vazia não é item
 				ign = append(ign, Ignorado{nome, "linha " + strconv.Itoa(i+2) + ": sem NCM/NBS"})
 			}
 			continue
 		}
+		v, ok := parseValor(col(m.Valor))
+		if !ok {
+			ign = append(ign, Ignorado{nome, "linha " + strconv.Itoa(i+2) + ": valor inválido"})
+			continue
+		}
+		it.Valor = v
 		itens = append(itens, it)
 	}
 	return itens, ign, nil

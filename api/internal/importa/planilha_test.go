@@ -68,3 +68,29 @@ func TestLinhaSemCodigo(t *testing.T) {
 		t.Errorf("%v %v", itens, ign)
 	}
 }
+
+func TestValores(t *testing.T) {
+	for in, want := range map[string]float64{"R$ 1.234,56": 1234.56, "1.234": 1234, "1.234.567": 1234567, "3.20": 3.2, "1234.5": 1234.5, "": 0} {
+		if v, ok := parseValor(in); !ok || v != want {
+			t.Errorf("%q -> %v %v", in, v, ok)
+		}
+	}
+	itens, ign, _ := LerPlanilha("x.csv", strings.NewReader("d,n,v\nA,1,abc\nB,2,-\n , , \nC,3,\n"), Mapeamento{Descricao: 0, NCM: 1, Valor: 2, Codigo: -1, NBS: -1})
+	if len(itens) != 1 || len(ign) != 2 || ign[0].Motivo != "linha 2: valor inválido" {
+		t.Errorf("%v %v", itens, ign)
+	}
+}
+
+func TestXLSXFormatoNumerico(t *testing.T) {
+	x := excelize.NewFile()
+	x.SetSheetRow("Sheet1", "A1", &[]any{"d", "n", "v"})
+	x.SetSheetRow("Sheet1", "A2", &[]any{"A", "123", 1234.56})
+	fmtID := 4 // #,##0.00
+	st, _ := x.NewStyle(&excelize.Style{NumFmt: fmtID})
+	x.SetCellStyle("Sheet1", "C2", "C2", st)
+	b, _ := x.WriteToBuffer()
+	itens, _, err := LerPlanilha("i.xlsx", bytes.NewReader(b.Bytes()), Mapeamento{Descricao: 0, NCM: 1, Valor: 2, Codigo: -1, NBS: -1})
+	if err != nil || len(itens) != 1 || itens[0].Valor != 1234.56 {
+		t.Fatalf("%v %v", itens, err)
+	}
+}
