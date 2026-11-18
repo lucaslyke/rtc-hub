@@ -129,7 +129,7 @@ func UpsertItens(ctx context.Context, tx pgx.Tx, clienteID string, itens []ItemE
 		var inserido bool
 		err = tx.QueryRow(ctx, `insert into itens (cliente_id, codigo, descricao, ncm, nbs, c_trib_nac, ultimo_valor,
 				situacao, cst, cclasstrib, is_cst, is_cclasstrib, condicao, opcoes)
-			values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			values ($1,$2,$3,$4,$5,$6,$7,coalesce(nullif($8,''),'revisar'),$9,$10,$11,$12,$13,$14)
 			on conflict (cliente_id, codigo, ncm, nbs) do update set
 				ocorrencias = itens.ocorrencias + 1,
 				ultimo_valor = case when excluded.ultimo_valor > 0 then excluded.ultimo_valor else itens.ultimo_valor end,
@@ -183,16 +183,17 @@ func ListarItens(ctx context.Context, tx pgx.Tx, clienteID string) ([]Item, erro
 	return out, rows.Err()
 }
 
-// AtualizarItem grava a classificação com a origem dada (ex.: 'manual'); erro se o item não é visível.
-func AtualizarItem(ctx context.Context, tx pgx.Tx, id, origem, cst, cclasstrib string) (Item, error) {
-	return scanItem(tx.QueryRow(ctx, `update itens set origem=$2, cst=$3, cclasstrib=$4, atualizado_em=now()
-		where id=$1 returning `+colsItem, id, origem, cst, cclasstrib))
+// AtualizarItem é a edição manual: origem 'manual', situacao 'ok', condição limpa.
+func AtualizarItem(ctx context.Context, tx pgx.Tx, id, cst, cClassTrib, isCST, isCClassTrib string) error {
+	_, err := tx.Exec(ctx, `update itens set origem='manual', situacao='ok', cst=$2, cclasstrib=$3, is_cst=$4, is_cclasstrib=$5,
+		condicao='', atualizado_em=now() where id=$1`, id, cst, cClassTrib, isCST, isCClassTrib)
+	return err
 }
 
-// ConfirmarItens marca como 'confirmado' os itens ainda 'sugerido'; devolve quantos mudaram.
+// ConfirmarItens aprova em lote só os 'provavel' ainda 'sugerido'; devolve quantos mudaram.
 func ConfirmarItens(ctx context.Context, tx pgx.Tx, ids []string) (int64, error) {
-	tag, err := tx.Exec(ctx, `update itens set origem='confirmado', atualizado_em=now()
-		where id = any($1::uuid[]) and origem='sugerido'`, ids)
+	tag, err := tx.Exec(ctx, `update itens set origem='confirmado', situacao='ok', atualizado_em=now()
+		where id = any($1::uuid[]) and origem='sugerido' and situacao='provavel'`, ids)
 	return tag.RowsAffected(), err
 }
 

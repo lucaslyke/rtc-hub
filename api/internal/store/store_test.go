@@ -72,13 +72,74 @@ func TestRLSIsolaEscritorios(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.ComoUsuario(ctx, a, func(tx pgx.Tx) error {
-		cs, _ := ListarClientes(ctx, tx)
+	err = s.ComoUsuario(ctx, a, func(tx pgx.Tx) error {
+		cs, err := ListarClientes(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if len(cs) != 1 || cs[0].RazaoSocial != "Acme" {
 			t.Errorf("A deveria ver seu cliente intacto: %+v", cs)
 		}
 		return nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// B não pode pendurar linhas no cliente de A (a FK composta fecha o furo do RLS).
+func TestRLSBloqueiaFilhosEmClienteAlheio(t *testing.T) {
+	s, ctx := novoStore(t)
+	a, b := novoUsuario(t, s, ctx), novoUsuario(t, s, ctx)
+	ca := novoCliente(t, s, ctx, a)
+	for nome, q := range map[string]string{
+		"itens":   `insert into itens (cliente_id, codigo) values ($1,'X')`,
+		"notas":   `insert into notas_importadas (cliente_id, chave) values ($1,'K')`,
+		"import.": `insert into importacoes (cliente_id, tipo) values ($1,'xml')`,
+	} {
+		err := s.ComoUsuario(ctx, b, func(tx pgx.Tx) error { _, err := tx.Exec(ctx, q, ca.ID); return err })
+		if err == nil {
+			t.Errorf("%s: B inseriu no cliente de A", nome)
+		}
+	}
+}
+
+func TestConfirmarEAtualizarItem(t *testing.T) {
+	s, ctx := novoStore(t)
+	u := novoUsuario(t, s, ctx)
+	c := novoCliente(t, s, ctx, u)
+	err := s.ComoUsuario(ctx, u, func(tx pgx.Tx) error {
+		if _, _, err := UpsertItens(ctx, tx, c.ID, []ItemEntrada{
+			{Codigo: "P", Situacao: "provavel", CST: "000", Condicao: "c"},
+			{Codigo: "R", Situacao: "revisar"},
+		}); err != nil {
+			return err
+		}
+		its, err := ListarItens(ctx, tx, c.ID)
+		if err != nil {
+			return err
+		}
+		ids := []string{its[0].ID, its[1].ID}
+		if n, err := ConfirmarItens(ctx, tx, ids); err != nil || n != 1 {
+			t.Fatalf("confirmar: %d %v", n, err)
+		}
+		its, _ = ListarItens(ctx, tx, c.ID)
+		if its[0].Situacao != "ok" || its[0].Origem != "confirmado" || its[1].Situacao != "revisar" || its[1].Origem != "sugerido" {
+			t.Errorf("confirmar: %+v", its)
+		}
+		if err := AtualizarItem(ctx, tx, its[1].ID, "200", "200001", "", ""); err != nil {
+			return err
+		}
+		its, _ = ListarItens(ctx, tx, c.ID)
+		i := its[1]
+		if i.Origem != "manual" || i.Situacao != "ok" || i.CST != "200" || i.CClassTrib != "200001" || i.Condicao != "" || i.ISCST != "" {
+			t.Errorf("manual: %+v", i)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestUpsertPreservaManual(t *testing.T) {
@@ -93,7 +154,7 @@ func TestUpsertPreservaManual(t *testing.T) {
 			t.Fatalf("1ª carga: %d %d %v", n, a, err)
 		}
 		its, _ := ListarItens(ctx, tx, c.ID)
-		if _, err := AtualizarItem(ctx, tx, its[0].ID, "manual", "200", "200001"); err != nil {
+		if err := AtualizarItem(ctx, tx, its[0].ID, "200", "200001", "", ""); err != nil {
 			t.Fatal(err)
 		}
 		novo := base
@@ -121,7 +182,7 @@ func TestRegistrarNotasEAliquotas(t *testing.T) {
 	s, ctx := novoStore(t)
 	u := novoUsuario(t, s, ctx)
 	c := novoCliente(t, s, ctx, u)
-	s.ComoUsuario(ctx, u, func(tx pgx.Tx) error {
+	err := s.ComoUsuario(ctx, u, func(tx pgx.Tx) error {
 		if j, err := RegistrarNotas(ctx, tx, c.ID, []string{"k1", "k2"}); err != nil || len(j) != 0 {
 			t.Errorf("1ª: %v %v", j, err)
 		}
@@ -141,4 +202,7 @@ func TestRegistrarNotasEAliquotas(t *testing.T) {
 		}
 		return nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
