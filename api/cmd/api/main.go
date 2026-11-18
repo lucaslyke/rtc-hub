@@ -40,13 +40,16 @@ func main() {
 		log.Fatalf("banco: %v", err)
 	}
 	defer st.Close()
-	kf, err := httpapi.JWKS(ctx, env("SUPABASE_URL", ""))
+	supa := env("SUPABASE_URL", "")
+	kf, err := httpapi.JWKS(ctx, supa)
 	if err != nil {
 		log.Fatalf("jwks: %v", err)
 	}
 	regular, simples := env("CALC_REGULAR_URL", "http://calc-regular:8080"), env("CALC_SIMPLES_URL", "http://calc-simples:8082")
 	s := &httpapi.Servidor{
 		Store: st, Tabelas: tab, Motores: motores.Novo(regular, simples, nil), Keyfunc: kf,
+		// a api pode falar com o Supabase por outro host (host.docker.internal) que não o do iss dos tokens
+		Issuer:     env("SUPABASE_JWT_ISSUER", httpapi.Emissor(supa)),
 		CORSOrigin: os.Getenv("CORS_ORIGIN"),
 		Sondas:     []string{regular + "/api/swagger-ui.html", simples + "/api/versao"},
 	}

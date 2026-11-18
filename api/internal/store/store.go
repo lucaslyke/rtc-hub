@@ -129,7 +129,7 @@ func CriarCliente(ctx context.Context, tx pgx.Tx, c Cliente) (Cliente, error) {
 func UpsertItens(ctx context.Context, tx pgx.Tx, clienteID string, itens []ItemEntrada) (novos, atualizados int, err error) {
 	for _, it := range itens {
 		if it.Opcoes == nil {
-			it.Opcoes = json.RawMessage(`[]`)
+			it.Opcoes = json.RawMessage(`{"ibsCbs":[],"is":[]}`)
 		}
 		var inserido bool
 		err = tx.QueryRow(ctx, `insert into itens (cliente_id, codigo, descricao, ncm, nbs, c_trib_nac, ultimo_valor,
@@ -146,7 +146,9 @@ func UpsertItens(ctx context.Context, tx pgx.Tx, clienteID string, itens []ItemE
 				is_cst = case when itens.origem = 'sugerido' then excluded.is_cst else itens.is_cst end,
 				is_cclasstrib = case when itens.origem = 'sugerido' then excluded.is_cclasstrib else itens.is_cclasstrib end,
 				condicao = case when itens.origem = 'sugerido' then excluded.condicao else itens.condicao end,
-				opcoes = case when itens.origem = 'sugerido' then excluded.opcoes else itens.opcoes end
+				opcoes = case when itens.origem = 'sugerido' then excluded.opcoes else itens.opcoes end,
+				calculos = case when itens.origem = 'sugerido' and (itens.cst, itens.cclasstrib, itens.is_cst, itens.is_cclasstrib)
+					is distinct from (excluded.cst, excluded.cclasstrib, excluded.is_cst, excluded.is_cclasstrib) then '{}' else itens.calculos end
 			returning (xmax = 0)`,
 			clienteID, it.Codigo, it.Descricao, it.NCM, it.NBS, it.CTribNac, it.Valor,
 			it.Situacao, it.CST, it.CClassTrib, it.ISCST, it.ISCClassTrib, it.Condicao, it.Opcoes).Scan(&inserido)
@@ -188,10 +190,12 @@ func ListarItens(ctx context.Context, tx pgx.Tx, clienteID string) ([]Item, erro
 	return out, rows.Err()
 }
 
-// AtualizarItem é a edição manual: origem 'manual', situacao 'ok', condição limpa.
+// AtualizarItem é a edição manual: origem 'manual', situacao 'ok', cálculos antigos descartados.
+// A condição (a do IS) só fica se o contador manteve o IS; sem IS ela não se aplica mais.
 func AtualizarItem(ctx context.Context, tx pgx.Tx, id, cst, cClassTrib, isCST, isCClassTrib string) error {
 	_, err := tx.Exec(ctx, `update itens set origem='manual', situacao='ok', cst=$2, cclasstrib=$3, is_cst=$4, is_cclasstrib=$5,
-		condicao='', atualizado_em=now() where id=$1`, id, cst, cClassTrib, isCST, isCClassTrib)
+		condicao = case when $5 <> '' then condicao else '' end, calculos='{}', atualizado_em=now() where id=$1`,
+		id, cst, cClassTrib, isCST, isCClassTrib)
 	return err
 }
 
@@ -218,10 +222,14 @@ func Aliquotas(ctx context.Context, tx pgx.Tx) (a AliquotasEst, err error) {
 	return
 }
 
+// SalvarAliquotas também descarta os cálculos do escritório (o RLS limita aos itens dele): foram feitos com as antigas.
 func SalvarAliquotas(ctx context.Context, tx pgx.Tx, a AliquotasEst) error {
 	_, err := tx.Exec(ctx, `insert into aliquotas_estimadas (cbs, ibs_uf, ibs_mun, is_ad_valorem) values ($1,$2,$3,$4)
 		on conflict (user_id) do update set cbs=$1, ibs_uf=$2, ibs_mun=$3, is_ad_valorem=$4`,
 		a.CBS, a.IBSUF, a.IBSMun, a.ISAdValorem)
+	if err == nil {
+		_, err = tx.Exec(ctx, `update itens set calculos='{}' where calculos <> '{}'`)
+	}
 	return err
 }
 
@@ -245,7 +253,15 @@ func ObterCliente(ctx context.Context, tx pgx.Tx, id string) (Cliente, error) {
 	return scanCliente(tx.QueryRow(ctx, `select `+colsCliente+` from clientes where id=$1`, id))
 }
 
+// AtualizarCliente descarta os cálculos dos itens quando muda algo que entra no cálculo.
 func AtualizarCliente(ctx context.Context, tx pgx.Tx, c Cliente) (Cliente, error) {
+	_, err := tx.Exec(ctx, `update itens set calculos='{}' where cliente_id=$1 and exists (select 1 from clientes k where k.id=$1
+		and (k.regime, k.uf, k.municipio_ibge, coalesce(k.c_ativ_sn,''), k.p_ibs_sn, k.p_cbs_sn)
+		is distinct from ($2::text, $3::text, $4::int, $5::text, $6::numeric, $7::numeric))`,
+		c.ID, c.Regime, c.UF, c.MunicipioIBGE, c.CAtivSN, c.PIBSSN, c.PCBSSN)
+	if err != nil {
+		return Cliente{}, err
+	}
 	return scanCliente(tx.QueryRow(ctx, `update clientes set razao_social=$2, cnpj=$3, regime=$4, uf=$5, municipio_ibge=$6,
 		c_ativ_sn=nullif($7,''), p_ibs_sn=$8, p_cbs_sn=$9 where id=$1 returning `+colsCliente,
 		c.ID, c.RazaoSocial, c.CNPJ, c.Regime, c.UF, c.MunicipioIBGE, c.CAtivSN, c.PIBSSN, c.PCBSSN))

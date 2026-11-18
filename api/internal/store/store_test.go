@@ -278,3 +278,82 @@ func TestDefinirNBSEContagem(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Cálculo guardado não pode sobreviver a uma mudança que altera o resultado.
+func TestCalculosDescartadosAoMudar(t *testing.T) {
+	s, ctx := novoStore(t)
+	u := novoUsuario(t, s, ctx)
+	c := novoCliente(t, s, ctx, u)
+	calc := `{"vCbs":"1.00"}`
+	err := s.ComoUsuario(ctx, u, func(tx pgx.Tx) error {
+		base := []ItemEntrada{{Codigo: "A", NCM: "1", Situacao: "ok", CST: "000", CClassTrib: "000001"}, {Codigo: "B", NCM: "2", Situacao: "ok", CST: "000", CClassTrib: "000001"}}
+		UpsertItens(ctx, tx, c.ID, base)
+		its, _ := ListarItens(ctx, tx, c.ID)
+		calcular := func() {
+			for _, i := range its {
+				if err := SalvarCalculo(ctx, tx, i.ID, "2027", []byte(calc)); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		vazios := func(passo string, want ...bool) {
+			atual, _ := ListarItens(ctx, tx, c.ID)
+			for k, i := range atual {
+				if (string(i.Calculos) == "{}") != want[k] {
+					t.Errorf("%s: %s calculos=%s", passo, i.Codigo, i.Calculos)
+				}
+			}
+		}
+		calcular()
+		mudou := base
+		mudou[1].CClassTrib = "000002"
+		UpsertItens(ctx, tx, c.ID, mudou) // reimportação com a mesma classificação mantém, com outra descarta
+		vazios("reimportar", false, true)
+
+		calcular()
+		AtualizarItem(ctx, tx, its[0].ID, "200", "200003", "", "")
+		vazios("patch", true, false)
+
+		calcular()
+		c.RazaoSocial = "Outro nome"
+		AtualizarCliente(ctx, tx, c)
+		vazios("razão social", false, false)
+		c.UF = "RJ"
+		if _, err := AtualizarCliente(ctx, tx, c); err != nil {
+			t.Fatal(err)
+		}
+		vazios("UF", true, true)
+
+		calcular()
+		if err := SalvarAliquotas(ctx, tx, AliquotasEst{CBS: 9}); err != nil {
+			t.Fatal(err)
+		}
+		vazios("alíquotas", true, true)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAtualizarItemCondicaoDoIS(t *testing.T) {
+	s, ctx := novoStore(t)
+	u := novoUsuario(t, s, ctx)
+	c := novoCliente(t, s, ctx, u)
+	err := s.ComoUsuario(ctx, u, func(tx pgx.Tx) error {
+		UpsertItens(ctx, tx, c.ID, []ItemEntrada{{Codigo: "C", NCM: "22030000", Situacao: "provavel", ISCST: "000", ISCClassTrib: "000001", Condicao: "IS"}})
+		its, _ := ListarItens(ctx, tx, c.ID)
+		AtualizarItem(ctx, tx, its[0].ID, "000", "000001", "000", "000001")
+		if i, _ := ObterItem(ctx, tx, its[0].ID); i.Condicao != "IS" {
+			t.Errorf("com IS: %q", i.Condicao)
+		}
+		AtualizarItem(ctx, tx, its[0].ID, "000", "000001", "", "")
+		if i, _ := ObterItem(ctx, tx, its[0].ID); i.Condicao != "" || i.ISCClassTrib != "" {
+			t.Errorf("sem IS (revenda): %+v", i)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

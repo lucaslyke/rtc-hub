@@ -34,6 +34,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-}
       SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_JWT_ISSUER: ${SUPABASE_JWT_ISSUER:-}
       TABELAS_DB: /tabelas/calculadora-pro.db
       CALC_REGULAR_URL: http://calc-regular:8080
       CALC_SIMPLES_URL: http://calc-simples:8082

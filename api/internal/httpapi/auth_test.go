@@ -44,11 +44,15 @@ func TestJWKSDoSupabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Servidor{Keyfunc: kf}
+	s := &Servidor{Keyfunc: kf, Issuer: Emissor(url)}
 	r, _ := http.NewRequest("GET", "/", nil)
 	r.Header.Set("Authorization", "Bearer "+sess.AccessToken)
 	uid, err := s.usuario(r)
 	if err != nil || uid != sess.User.ID {
 		t.Errorf("usuario = %q, %v; quer %q", uid, err, sess.User.ID)
+	}
+	s.Issuer = "https://outro.supabase.co/auth/v1"
+	if _, err := s.usuario(r); err == nil {
+		t.Error("aceitou token de outro emissor")
 	}
 }

@@ -44,6 +44,10 @@ func lerCliente(r *http.Request) (store.Cliente, error) {
 		return ruim("Código IBGE do município deve ter 7 dígitos.")
 	case c.Regime == "simples" && (!reCAtiv.MatchString(c.CAtivSN) || c.PIBSSN == nil || c.PCBSSN == nil):
 		return ruim("Para o Simples, informe a atividade (cAtivSN) e as alíquotas efetivas de IBS e CBS.")
+	case c.Regime == "simples" && (c.CAtivSN < "01" || c.CAtivSN > "15"):
+		return ruim("A atividade do Simples (cAtivSN) vai de 01 a 15.")
+	case c.Regime == "simples" && (*c.PIBSSN < 0 || *c.PIBSSN > 100 || *c.PCBSSN < 0 || *c.PCBSSN > 100):
+		return ruim("As alíquotas efetivas de IBS e CBS do Simples devem estar entre 0 e 100%.")
 	}
 	if c.Regime == "regular" {
 		c.CAtivSN, c.PIBSSN, c.PCBSSN = "", nil, nil

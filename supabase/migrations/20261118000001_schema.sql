@@ -53,7 +53,7 @@ create table itens (
   is_cst text not null default '',
   is_cclasstrib text not null default '',
   condicao text not null default '',
-  opcoes jsonb not null default '[]',
+  opcoes jsonb not null default '{"ibsCbs":[],"is":[]}',
   calculos jsonb not null default '{}', -- chave = ano
   atualizado_em timestamptz not null default now(),
   unique (cliente_id, codigo, ncm, nbs),

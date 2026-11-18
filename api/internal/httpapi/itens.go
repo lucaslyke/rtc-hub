@@ -73,6 +73,26 @@ func (s *Servidor) atualizarItem(w http.ResponseWriter, r *http.Request, uid str
 	}
 	var it store.Item
 	err = s.tx(r, uid, func(tx pgx.Tx) error {
+		atual, err := store.ObterItem(r.Context(), tx, iid)
+		if err != nil {
+			return err
+		}
+		tipo, codigo := tabelas.NCM, atual.NCM
+		switch {
+		case atual.NCM != "":
+		case atual.NBS != "":
+			tipo, codigo = tabelas.NBS, atual.NBS
+		default: // serviço sem NBS: vale a NBS escolhida agora, se houver
+			tipo, codigo = tabelas.NBS, in.NBS
+		}
+		if err := s.validarClassificacao(r, tipo, codigo, in.CST, in.CClassTrib, false); err != nil {
+			return err
+		}
+		if !isVazio {
+			if err := s.validarClassificacao(r, tipo, codigo, in.ISCST, in.ISCClassTrib, true); err != nil {
+				return err
+			}
+		}
 		if err := store.AtualizarItem(r.Context(), tx, iid, in.CST, in.CClassTrib, in.ISCST, in.ISCClassTrib); err != nil {
 			return err
 		}
@@ -122,5 +142,31 @@ func (s *Servidor) confirmar(w http.ResponseWriter, r *http.Request, uid string)
 		return err
 	}
 	responder(w, 200, map[string]int64{"confirmados": n})
+	return nil
+}
+
+// validarClassificacao: o par CST/cClassTrib existe, está vigente e vale para o NCM/NBS do item.
+func (s *Servidor) validarClassificacao(r *http.Request, tipo tabelas.Tipo, codigo, cst, cClassTrib string, is bool) error {
+	data := dataSugestao()
+	o, err := s.Tabelas.Classificacao(r.Context(), cClassTrib, data, is)
+	if err != nil {
+		return err
+	}
+	if o == nil {
+		return falha(http.StatusBadRequest, "Classificação inexistente ou fora de vigência: "+cClassTrib+".")
+	}
+	if o.CST != cst {
+		return falha(http.StatusBadRequest, "A classificação "+cClassTrib+" é do CST "+o.CST+", não do "+cst+".")
+	}
+	if codigo == "" {
+		return nil
+	}
+	ok, err := s.Tabelas.ValeParaCodigo(r.Context(), tipo, codigo, cClassTrib, data, is)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return falha(http.StatusBadRequest, "Essa classificação não vale para o "+string(tipo)+" "+codigo+" na tabela da Receita.")
+	}
 	return nil
 }

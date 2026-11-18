@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -14,7 +15,10 @@ import (
 	"rtchub/internal/store"
 )
 
-const motoresFora = "Os motores de cálculo da Receita não responderam. Tente de novo em instantes."
+const (
+	motoresFora    = "Os motores de cálculo da Receita não responderam. Tente de novo em instantes."
+	baseReferencia = "Base de referência de R$ 100,00 (item sem valor)"
+)
 
 func pct(p *float64) string {
 	if p == nil {
@@ -41,6 +45,7 @@ func (s *Servidor) calcular(w http.ResponseWriter, r *http.Request, uid string) 
 	var cli store.Cliente
 	var al store.AliquotasEst
 	var prontos []motores.ItemCalc
+	semValor := map[string]bool{}
 	pendentes := []store.Item{}
 	err = s.tx(r, uid, func(tx pgx.Tx) error {
 		if cli, err = store.ObterCliente(r.Context(), tx, cid); err != nil {
@@ -55,8 +60,12 @@ func (s *Servidor) calcular(w http.ResponseWriter, r *http.Request, uid string) 
 				pendentes = append(pendentes, i)
 				continue
 			}
+			v := i.UltimoValor
+			if v <= 0 { // base 0 dá imposto 0, que pareceria isenção
+				v, semValor[i.ID] = 100, true
+			}
 			prontos = append(prontos, motores.ItemCalc{ID: i.ID, NCM: i.NCM, NBS: i.NBS, CST: i.CST, CClassTrib: i.CClassTrib,
-				ISCST: i.ISCST, ISCClassTrib: i.ISCClassTrib, Valor: i.UltimoValor})
+				ISCST: i.ISCST, ISCClassTrib: i.ISCClassTrib, Valor: v})
 		}
 		return err
 	})
@@ -73,6 +82,11 @@ func (s *Servidor) calcular(w http.ResponseWriter, r *http.Request, uid string) 
 		if err != nil {
 			log.Printf("motores (cliente %s, ano %d): %v", cid, in.Ano, err)
 			return falha(http.StatusBadGateway, motoresFora)
+		}
+		for i := range rs {
+			if semValor[rs[i].ItemID] {
+				rs[i].Mensagem = strings.TrimSuffix(baseReferencia+". "+rs[i].Mensagem, ". ")
+			}
 		}
 		ano := strconv.Itoa(in.Ano)
 		err = s.tx(r, uid, func(tx pgx.Tx) error {

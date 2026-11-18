@@ -28,7 +28,10 @@ import (
 	"rtchub/internal/tabelas"
 )
 
-const testdata = "../importa/testdata/"
+const (
+	testdata     = "../importa/testdata/"
+	emissorTeste = "http://supabase.teste/auth/v1"
+)
 
 type ambiente struct {
 	t     *testing.T
@@ -64,7 +67,7 @@ func novoAmbiente(t *testing.T, motor http.HandlerFunc) *ambiente {
 	chave, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	s := &Servidor{
 		Store: st, Tabelas: tab, Motores: motores.Novo(fm.URL, fm.URL, nil),
-		Keyfunc: func(*jwt.Token) (any, error) { return &chave.PublicKey, nil },
+		Keyfunc: func(*jwt.Token) (any, error) { return &chave.PublicKey, nil }, Issuer: emissorTeste,
 	}
 	srv := httptest.NewServer(s.Rotas())
 	t.Cleanup(srv.Close)
@@ -83,9 +86,11 @@ func novoAmbiente(t *testing.T, motor http.HandlerFunc) *ambiente {
 	return &ambiente{t: t, srv: srv, st: st, chave: chave, user: user}
 }
 
-func (a *ambiente) token(aud string) string {
+func (a *ambiente) token(aud string) string { return a.tokenDe(aud, emissorTeste) }
+
+func (a *ambiente) tokenDe(aud, iss string) string {
 	tk := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
-		"sub": a.user, "aud": aud, "role": "authenticated", "exp": time.Now().Add(time.Hour).Unix(),
+		"sub": a.user, "aud": aud, "iss": iss, "role": "authenticated", "exp": time.Now().Add(time.Hour).Unix(),
 	})
 	s, err := tk.SignedString(a.chave)
 	if err != nil {
@@ -186,7 +191,7 @@ func porCodigo(its []store.Item, codigo string) store.Item {
 
 func TestSemTokenDa401(t *testing.T) {
 	a := novoAmbiente(t, nil)
-	for _, h := range []string{"", "Bearer lixo", "Bearer " + a.token("outro")} {
+	for _, h := range []string{"", "Bearer lixo", "Bearer " + a.token("outro"), "Bearer " + a.tokenDe("authenticated", "http://outro/auth/v1")} {
 		r, _ := http.NewRequest("GET", a.srv.URL+"/clientes", nil)
 		if h != "" {
 			r.Header.Set("Authorization", h)
@@ -311,8 +316,12 @@ func TestPatchViraManual(t *testing.T) {
 	if st := a.json("PATCH", "/itens/"+ids["R"], map[string]any{"cst": "000", "cClassTrib": "000001", "isCst": "000", "isCClassTrib": "000001"}, &it); st != 200 {
 		t.Fatalf("patch: %d", st)
 	}
-	if it.Origem != "manual" || it.Situacao != "ok" || it.CClassTrib != "000001" || it.ISCClassTrib != "000001" || it.Condicao != "" {
+	if it.Origem != "manual" || it.Situacao != "ok" || it.CClassTrib != "000001" || it.ISCClassTrib != "000001" || it.Condicao != "x" {
 		t.Errorf("patch: %+v", it)
+	}
+	// "não incide (revenda)": IS vazio, condição do IS some
+	if st := a.json("PATCH", "/itens/"+ids["R"], map[string]any{"cst": "000", "cClassTrib": "000001"}, &it); st != 200 || it.ISCClassTrib != "" || it.Condicao != "" {
+		t.Errorf("revenda: %d %+v", st, it)
 	}
 	if st := a.json("PATCH", "/itens/"+ids["R"], map[string]any{"cst": "0", "cClassTrib": "000001"}, nil); st != 400 {
 		t.Errorf("CST inválido: %d, quer 400", st)
@@ -410,6 +419,7 @@ func TestImportarPlanilha(t *testing.T) {
 
 type opcoesLidas struct {
 	IBSCBS []struct {
+		CST        string `json:"cst"`
 		CClassTrib string `json:"cClassTrib"`
 		Descricao  string `json:"descricao"`
 	} `json:"ibsCbs"`
@@ -440,7 +450,7 @@ func TestServicoSemNBSEscolheNBSECalcula(t *testing.T) {
 	}
 	nbs := strings.TrimPrefix(strings.SplitN(o.IBSCBS[0].Descricao, " — ", 2)[0], "NBS ")
 	var got store.Item
-	if st := a.json("PATCH", "/itens/"+it.ID, map[string]any{"cst": "000", "cClassTrib": o.IBSCBS[0].CClassTrib, "nbs": nbs}, &got); st != 200 || got.NBS != tabelas.NormalizaCodigo(nbs) {
+	if st := a.json("PATCH", "/itens/"+it.ID, map[string]any{"cst": o.IBSCBS[0].CST, "cClassTrib": o.IBSCBS[0].CClassTrib, "nbs": nbs}, &got); st != 200 || got.NBS != tabelas.NormalizaCodigo(nbs) {
 		t.Fatalf("patch nbs: %d %+v", st, got)
 	}
 	if st := a.json("POST", "/clientes/"+c.ID+"/calcular", map[string]any{"ano": 2027}, nil); st != 200 {
@@ -535,5 +545,80 @@ func TestExportarXLSX(t *testing.T) {
 	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
 		resp.Header.Get("Content-Disposition") != `attachment; filename="cadastro-`+c.CNPJ+`-2027.xlsx"` || !strings.HasPrefix(b, "PK") {
 		t.Errorf("200: %d %v", resp.StatusCode, resp.Header)
+	}
+}
+
+func TestPatchValidaClassificacao(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	ids := seed(t, a, c.ID, store.ItemEntrada{Codigo: "C", NCM: "84713012", Situacao: "ok", CST: "000", CClassTrib: "000001"},
+		store.ItemEntrada{Codigo: "M", NCM: "30049045", Situacao: "revisar"})
+	for _, c := range []struct {
+		item string
+		in   map[string]any
+		msg  string
+	}{
+		{"C", map[string]any{"cst": "000", "cClassTrib": "999999"}, "Classificação inexistente ou fora de vigência"},
+		{"C", map[string]any{"cst": "000", "cClassTrib": "200003"}, "é do CST 200"},
+		{"C", map[string]any{"cst": "200", "cClassTrib": "200003"}, "Essa classificação não vale para o NCM 84713012 na tabela da Receita."},
+		{"C", map[string]any{"cst": "000", "cClassTrib": "000001", "isCst": "000", "isCClassTrib": "999999"}, "Classificação inexistente"},
+		{"C", map[string]any{"cst": "000", "cClassTrib": "000001", "isCst": "000", "isCClassTrib": "000001"}, "não vale para o NCM"}, // computador não tem IS
+	} {
+		r, _ := http.NewRequest("PATCH", a.srv.URL+"/itens/"+ids[c.item], strings.NewReader(mustJSON(c.in)))
+		r.Header.Set("Authorization", "Bearer "+a.token("authenticated"))
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 400 || !strings.Contains(string(b), c.msg) {
+			t.Errorf("%v: %d %s", c.in, resp.StatusCode, b)
+		}
+	}
+	var it store.Item
+	if st := a.json("PATCH", "/itens/"+ids["M"], map[string]any{"cst": "200", "cClassTrib": "200009"}, &it); st != 200 || it.CClassTrib != "200009" {
+		t.Errorf("medicamento 200009: %d %+v", st, it)
+	}
+}
+
+func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+func TestCalcularItemSemValorUsaBase100(t *testing.T) {
+	var corpo atomic.Value
+	a := novoAmbiente(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		corpo.Store(string(b))
+		fmt.Fprint(w, `{"objetos":[{"nObj":1,"estadoItem":"CALCULO_SIMULADO","tribCalc":{}}]}`)
+	})
+	c := a.cliente("regular")
+	seed(t, a, c.ID, store.ItemEntrada{Codigo: "Z", NCM: "84713012", Situacao: "ok", CST: "000", CClassTrib: "000001"})
+	var out struct{ Resultados []motores.Resultado }
+	if st := a.json("POST", "/clientes/"+c.ID+"/calcular", map[string]any{"ano": 2027}, &out); st != 200 {
+		t.Fatalf("calcular: %d", st)
+	}
+	if b, _ := corpo.Load().(string); !strings.Contains(b, `"baseCalculo":100`) {
+		t.Errorf("motor recebeu: %s", b)
+	}
+	if out.Resultados[0].Mensagem != "Base de referência de R$ 100,00 (item sem valor)" {
+		t.Errorf("mensagem: %q", out.Resultados[0].Mensagem)
+	}
+}
+
+func TestClienteSimplesValidaFaixas(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	base := map[string]any{"razaoSocial": "S", "cnpj": "11222333000181", "regime": "simples", "uf": "SP", "municipioIbge": 3550308, "cAtivSn": "01", "pIbsSn": 1.0, "pCbsSn": 2.0}
+	for k, v := range map[string]any{"cAtivSn": "16", "pIbsSn": 101.0, "pCbsSn": -1.0} {
+		in := map[string]any{}
+		for x, y := range base {
+			in[x] = y
+		}
+		in[k] = v
+		if st := a.json("POST", "/clientes", in, nil); st != 400 {
+			t.Errorf("%s=%v: %d, quer 400", k, v, st)
+		}
+	}
+	if st := a.json("POST", "/clientes", base, nil); st != 201 {
+		t.Errorf("válido: %d", st)
 	}
 }

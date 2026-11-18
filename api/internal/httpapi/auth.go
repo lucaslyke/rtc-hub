@@ -20,7 +20,10 @@ func JWKS(ctx context.Context, supabaseURL string) (jwt.Keyfunc, error) {
 	return k.Keyfunc, nil
 }
 
-// usuario valida o Bearer (assinatura assimétrica, aud authenticated, exp) e devolve o sub.
+// Emissor é o iss dos tokens do Supabase Auth.
+func Emissor(supabaseURL string) string { return strings.TrimRight(supabaseURL, "/") + "/auth/v1" }
+
+// usuario valida o Bearer (assinatura assimétrica, aud authenticated, iss, exp) e devolve o sub.
 func (s *Servidor) usuario(r *http.Request) (string, error) {
 	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok {
@@ -28,7 +31,7 @@ func (s *Servidor) usuario(r *http.Request) (string, error) {
 	}
 	var c jwt.RegisteredClaims
 	_, err := jwt.ParseWithClaims(tok, &c, s.Keyfunc,
-		jwt.WithAudience("authenticated"), jwt.WithExpirationRequired(),
+		jwt.WithAudience("authenticated"), jwt.WithExpirationRequired(), jwt.WithIssuer(s.Issuer),
 		jwt.WithValidMethods([]string{"ES256", "RS256", "EdDSA"}))
 	if err != nil {
 		return "", err

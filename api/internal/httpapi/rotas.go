@@ -24,6 +24,7 @@ type Servidor struct {
 	Tabelas    *tabelas.Tabelas
 	Motores    *motores.Motores
 	Keyfunc    jwt.Keyfunc
+	Issuer     string // iss exigido no JWT
 	CORSOrigin string
 	Sondas     []string // URLs dos motores que /health/ready consulta
 }
