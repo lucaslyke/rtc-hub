@@ -4,11 +4,24 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
 
-const condicaoIS = "O IS incide uma vez, no primeiro fornecimento (fabricante ou importador). Na revenda não há IS."
+const (
+	condicaoIS          = "O IS incide uma vez, no primeiro fornecimento (fabricante ou importador). Na revenda não há IS."
+	condicaoMedicamento = "Medicamentos: a redução depende de registro na Anvisa."
+	condicaoAnvisa      = "Só se o medicamento tiver registro na Anvisa"
+)
+
+// classesMedicamento valem para todo NCM do capítulo 30: a tabela da Receita não lista os
+// NCMs dos medicamentos, a redução depende do registro na Anvisa (o motor aceita).
+var classesMedicamento = []string{"200009", "200032"}
+
+func medicamento(tipo Tipo, codigo string) bool {
+	return tipo == NCM && strings.HasPrefix(codigo, "30")
+}
 
 // vig: linha com prefixo p vigente na data :d (datas TEXT 'YYYY-MM-DD').
 func vig(p string) string {
@@ -45,8 +58,14 @@ ORDER BY ct.CLTR_CD`
 var (
 	sqlCandidatos = map[Tipo]string{NCM: porTipo(NCM, sqlOpcao+filtroCandidatos), NBS: porTipo(NBS, sqlOpcao+filtroCandidatos)}
 	sqlVigente    = map[Tipo]string{NCM: porTipo(NCM, "SELECT 1 FROM {X} WHERE {X}_CD = :cod AND "+vig("{X}")), NBS: porTipo(NBS, "SELECT 1 FROM {X} WHERE {X}_CD = :cod AND "+vig("{X}"))}
-	sqlPadrao     = sqlOpcao + "  AND ct.CLTR_CD = '000001' ORDER BY ct.CLTR_ID LIMIT 1"
+	sqlPorCodigo  = sqlOpcao + "  AND ct.CLTR_CD = :cc ORDER BY ct.CLTR_ID LIMIT 1"
+	sqlTemLista   = map[Tipo]string{NCM: porTipo(NCM, sqlListaAplicavel), NBS: porTipo(NBS, sqlListaAplicavel)}
 )
+
+// sqlListaAplicavel: a classificação está restrita a uma lista de NCM/NBS vigente?
+var sqlListaAplicavel = `SELECT EXISTS (SELECT 1 FROM {X}_APLICAVEL n JOIN CLASSIFICACAO_TRIBUTARIA ct ON ct.CLTR_ID = n.{A}_CLTR_ID
+	WHERE ct.CLTR_CD = :cc AND ` + vig("n.{A}") + ` AND ` + vig("ct.CLTR") + `
+	  AND EXISTS (SELECT 1 FROM TRIBUTO_SITUACAO_TRIBUTARIA t WHERE t.TRST_SITR_ID = ct.CLTR_SITR_ID AND t.TRST_TBTO_ID = 1) = :is)`
 
 func porTipo(tipo Tipo, s string) string {
 	a, e := "NCMA", "ENCM"
@@ -77,21 +96,56 @@ func (t *Tabelas) opcoes(ctx context.Context, q string, args ...any) ([]Opcao, e
 		if dfe != "" {
 			o.Condicao = "Só em: " + dfe
 		}
+		if strings.HasPrefix(o.Fundamentacao, "Art.") {
+			o.Fundamentacao = "LC 214/2025, " + o.Fundamentacao
+		}
 		out = append(out, o)
 	}
 	return out, rows.Err()
 }
 
+// Classificacao busca um cClassTrib vigente no grupo IS (is=true) ou IBS/CBS; nil se não existe.
+func (t *Tabelas) Classificacao(ctx context.Context, cClassTrib, data string, is bool) (*Opcao, error) {
+	g := 0
+	if is {
+		g = 1
+	}
+	os, err := t.opcoes(ctx, sqlPorCodigo, sql.Named("cc", cClassTrib), sql.Named("d", data), sql.Named("is", g))
+	if err != nil || len(os) == 0 {
+		return nil, err
+	}
+	return &os[0], nil
+}
+
+// ValeParaCodigo: false só quando a classificação tem lista de NCM/NBS na tabela da Receita e o código
+// não está nela (mesma regra de prefixo e exceções das sugestões). Medicamentos do capítulo 30 valem.
+func (t *Tabelas) ValeParaCodigo(ctx context.Context, tipo Tipo, codigo, cClassTrib, data string, is bool) (bool, error) {
+	codigo = NormalizaCodigo(codigo)
+	if medicamento(tipo, codigo) && slices.Contains(classesMedicamento, cClassTrib) {
+		return true, nil
+	}
+	g := 0
+	if is {
+		g = 1
+	}
+	var tem bool
+	if err := t.db.QueryRowContext(ctx, sqlTemLista[tipo], sql.Named("cc", cClassTrib), sql.Named("d", data), sql.Named("is", g)).Scan(&tem); err != nil || !tem {
+		return !tem, err
+	}
+	os, err := t.opcoes(ctx, sqlCandidatos[tipo], sql.Named("cod", codigo), sql.Named("d", data), sql.Named("is", g))
+	return slices.ContainsFunc(os, func(o Opcao) bool { return o.CClassTrib == cClassTrib }), err
+}
+
 // padrao: cClassTrib 000001 procurado dentro do grupo (o código existe no IBS/CBS e no IS).
 func (t *Tabelas) padrao(ctx context.Context, data string, is int) (Opcao, error) {
-	os, err := t.opcoes(ctx, sqlPadrao, sql.Named("d", data), sql.Named("is", is))
+	o, err := t.Classificacao(ctx, "000001", data, is == 1)
 	if err != nil {
 		return Opcao{}, err
 	}
-	if len(os) == 0 {
+	if o == nil {
 		return Opcao{}, fmt.Errorf("cClassTrib 000001 (is=%d) não vigente em %s", is, data)
 	}
-	return os[0], nil
+	return *o, nil
 }
 
 var peso = map[Situacao]int{Ok: 0, Provavel: 1, Revisar: 2, Invalido: 3}
@@ -126,13 +180,29 @@ func (t *Tabelas) Sugerir(ctx context.Context, tipo Tipo, codigo string, data st
 	if err != nil {
 		return Sugestao{}, err
 	}
-	switch len(ibs) {
-	case 0:
-		s.IBSCBS = Classificacao{Situacao: Ok, Escolhida: &p, Opcoes: []Opcao{p}}
-	case 1:
-		s.IBSCBS = Classificacao{Situacao: Provavel, Escolhida: &ibs[0], Opcoes: []Opcao{ibs[0], p}}
-	default:
+	if medicamento(tipo, codigo) {
+		// nunca "ok": sem o registro na Anvisa a tabela não decide, o contador decide
+		for _, c := range classesMedicamento {
+			o, err := t.Classificacao(ctx, c, data, false)
+			if err != nil {
+				return Sugestao{}, err
+			}
+			if o != nil && !slices.ContainsFunc(ibs, func(x Opcao) bool { return x.CClassTrib == c }) {
+				o.Condicao = strings.TrimSuffix(condicaoAnvisa+". "+o.Condicao, ". ")
+				ibs = append(ibs, *o)
+			}
+		}
+		s.Motivo = condicaoMedicamento
 		s.IBSCBS = Classificacao{Situacao: Revisar, Opcoes: append(ibs, p)}
+	} else {
+		switch len(ibs) {
+		case 0:
+			s.IBSCBS = Classificacao{Situacao: Ok, Escolhida: &p, Opcoes: []Opcao{p}}
+		case 1:
+			s.IBSCBS = Classificacao{Situacao: Provavel, Escolhida: &ibs[0], Opcoes: []Opcao{ibs[0], p}}
+		default:
+			s.IBSCBS = Classificacao{Situacao: Revisar, Opcoes: append(ibs, p)}
+		}
 	}
 
 	is, err := cand(1)

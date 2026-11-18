@@ -147,3 +147,57 @@ func TestNBSPorServico(t *testing.T) {
 		t.Fatalf("nbs=%v err=%v", nbs, err)
 	}
 }
+
+func TestMedicamentoSempreRevisar(t *testing.T) {
+	for _, ncm := range []string{"30049045", "30051010"} { // 30051010 sem nenhuma linha na tabela: antes saía "ok"
+		s := sugerir(t, NCM, ncm)
+		if s.Situacao != Revisar || s.IBSCBS.Escolhida != nil || s.Motivo != condicaoMedicamento {
+			t.Fatalf("%s: %+v", ncm, s)
+		}
+		achou := map[string]bool{}
+		for _, o := range s.IBSCBS.Opcoes {
+			if o.CClassTrib == "200009" || o.CClassTrib == "200032" {
+				achou[o.CClassTrib] = true
+				if !strings.HasPrefix(o.Condicao, condicaoAnvisa) || o.CST != "200" {
+					t.Errorf("%s %+v", ncm, o)
+				}
+			}
+		}
+		if len(achou) != 2 || s.IBSCBS.Opcoes[len(s.IBSCBS.Opcoes)-1].CClassTrib != "000001" {
+			t.Fatalf("%s opcoes %+v", ncm, s.IBSCBS.Opcoes)
+		}
+	}
+}
+
+func TestFundamentacaoComLei(t *testing.T) {
+	s := sugerir(t, NCM, ncmUmTratamento)
+	if f := s.IBSCBS.Escolhida.Fundamentacao; !strings.HasPrefix(f, "LC 214/2025, Art.") {
+		t.Fatalf("fundamentacao %q", f)
+	}
+}
+
+func TestClassificacaoEValeParaCodigo(t *testing.T) {
+	tb, ctx := abrirTeste(t), context.Background()
+	if o, err := tb.Classificacao(ctx, "999999", data, false); o != nil || err != nil {
+		t.Fatalf("999999: %+v %v", o, err)
+	}
+	o, _ := tb.Classificacao(ctx, "200003", data, false)
+	if o == nil || o.CST != "200" {
+		t.Fatalf("200003: %+v", o)
+	}
+	if oi, _ := tb.Classificacao(ctx, "200003", data, true); oi == nil || oi.Descricao == o.Descricao { // o mesmo código existe nos dois grupos
+		t.Fatalf("200003 como IS: %+v", oi)
+	}
+	for _, c := range []struct {
+		ncm, cc string
+		want    bool
+	}{{ncmUmTratamento, "200003", true}, {ncmComum, "200003", false}, {ncmComum, "000001", true},
+		{"30049045", "200009", true}, {"30049045", "200030", false}, {ncmExcecao, cClassExcetuado, false}} {
+		if ok, err := tb.ValeParaCodigo(ctx, NCM, c.ncm, c.cc, data, false); err != nil || ok != c.want {
+			t.Errorf("%s/%s = %v %v", c.ncm, c.cc, ok, err)
+		}
+	}
+	if ok, _ := tb.ValeParaCodigo(ctx, NCM, ncmCerveja, "000001", data, true); !ok {
+		t.Error("IS 000001")
+	}
+}
