@@ -1,0 +1,6 @@
+# uso local: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+services:
+  calc-regular:
+    ports: ["127.0.0.1:8080:8080"]
+  calc-simples:
+    ports: ["127.0.0.1:8082:8082"]
