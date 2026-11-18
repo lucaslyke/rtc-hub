@@ -511,3 +511,29 @@ func TestImportarAcimaDe50MBDa413(t *testing.T) {
 		t.Errorf("status %d, quer 413", st)
 	}
 }
+
+func TestExportarXLSX(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	get := func(q string) (*http.Response, string) {
+		r, _ := http.NewRequest("GET", a.srv.URL+"/clientes/"+c.ID+"/exportar.xlsx"+q, nil)
+		r.Header.Set("Authorization", "Bearer "+a.token("authenticated"))
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, string(b)
+	}
+	for _, q := range []string{"", "?ano=abc", "?ano=2025"} {
+		if resp, b := get(q); resp.StatusCode != 400 || !strings.Contains(b, "ano") {
+			t.Errorf("%q: %d %s", q, resp.StatusCode, b)
+		}
+	}
+	resp, b := get("?ano=2027")
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+		resp.Header.Get("Content-Disposition") != `attachment; filename="cadastro-`+c.CNPJ+`-2027.xlsx"` || !strings.HasPrefix(b, "PK") {
+		t.Errorf("200: %d %v", resp.StatusCode, resp.Header)
+	}
+}
