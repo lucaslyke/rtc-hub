@@ -4,3 +4,10 @@ services:
     ports: ["127.0.0.1:8080:8080"]
   calc-simples:
     ports: ["127.0.0.1:8082:8082"]
+  api:
+    ports: ["127.0.0.1:8090:8090"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:54322/postgres
+      SUPABASE_URL: http://host.docker.internal:54321
+      CORS_ORIGIN: http://localhost:5173

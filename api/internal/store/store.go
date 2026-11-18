@@ -47,36 +47,36 @@ func (s *Store) ComoUsuario(ctx context.Context, userID string, fn func(pgx.Tx) 
 }
 
 type Cliente struct {
-	ID            string
-	RazaoSocial   string
-	CNPJ          string
-	Regime        string
-	UF            string
-	MunicipioIBGE int
-	CAtivSN       string
-	PIBSSN        *float64
-	PCBSSN        *float64
+	ID            string   `json:"id"`
+	RazaoSocial   string   `json:"razaoSocial"`
+	CNPJ          string   `json:"cnpj"`
+	Regime        string   `json:"regime"`
+	UF            string   `json:"uf"`
+	MunicipioIBGE int      `json:"municipioIbge"`
+	CAtivSN       string   `json:"cAtivSn"`
+	PIBSSN        *float64 `json:"pIbsSn"`
+	PCBSSN        *float64 `json:"pCbsSn"`
 }
 
 type Item struct {
-	ID           string
-	ClienteID    string
-	Codigo       string
-	Descricao    string
-	NCM          string
-	NBS          string
-	CTribNac     string
-	Ocorrencias  int
-	UltimoValor  float64
-	Situacao     string
-	Origem       string
-	CST          string
-	CClassTrib   string
-	ISCST        string
-	ISCClassTrib string
-	Condicao     string
-	Opcoes       json.RawMessage
-	Calculos     json.RawMessage // chave = ano
+	ID           string          `json:"id"`
+	ClienteID    string          `json:"clienteId"`
+	Codigo       string          `json:"codigo"`
+	Descricao    string          `json:"descricao"`
+	NCM          string          `json:"ncm"`
+	NBS          string          `json:"nbs"`
+	CTribNac     string          `json:"cTribNac"`
+	Ocorrencias  int             `json:"ocorrencias"`
+	UltimoValor  float64         `json:"ultimoValor"`
+	Situacao     string          `json:"situacao"`
+	Origem       string          `json:"origem"`
+	CST          string          `json:"cst"`
+	CClassTrib   string          `json:"cClassTrib"`
+	ISCST        string          `json:"isCst"`
+	ISCClassTrib string          `json:"isCClassTrib"`
+	Condicao     string          `json:"condicao"`
+	Opcoes       json.RawMessage `json:"opcoes"`
+	Calculos     json.RawMessage `json:"calculos"` // chave = ano
 }
 
 // ItemEntrada é a identidade do item mais a sugestão do motor.
@@ -88,7 +88,12 @@ type ItemEntrada struct {
 	Opcoes                                json.RawMessage
 }
 
-type AliquotasEst struct{ CBS, IBSUF, IBSMun, ISAdValorem float64 }
+type AliquotasEst struct {
+	CBS         float64 `json:"cbs"`
+	IBSUF       float64 `json:"ibsUf"`
+	IBSMun      float64 `json:"ibsMun"`
+	ISAdValorem float64 `json:"isAdValorem"`
+}
 
 const colsCliente = `id, razao_social, cnpj, regime, uf, municipio_ibge, coalesce(c_ativ_sn,''), p_ibs_sn, p_cbs_sn`
 
@@ -233,4 +238,36 @@ func RegistrarNotas(ctx context.Context, tx pgx.Tx, clienteID string, chaves []s
 		}
 	}
 	return ja, nil
+}
+
+// ObterCliente devolve pgx.ErrNoRows se o cliente não existe ou é de outro escritório.
+func ObterCliente(ctx context.Context, tx pgx.Tx, id string) (Cliente, error) {
+	return scanCliente(tx.QueryRow(ctx, `select `+colsCliente+` from clientes where id=$1`, id))
+}
+
+func AtualizarCliente(ctx context.Context, tx pgx.Tx, c Cliente) (Cliente, error) {
+	return scanCliente(tx.QueryRow(ctx, `update clientes set razao_social=$2, cnpj=$3, regime=$4, uf=$5, municipio_ibge=$6,
+		c_ativ_sn=nullif($7,''), p_ibs_sn=$8, p_cbs_sn=$9 where id=$1 returning `+colsCliente,
+		c.ID, c.RazaoSocial, c.CNPJ, c.Regime, c.UF, c.MunicipioIBGE, c.CAtivSN, c.PIBSSN, c.PCBSSN))
+}
+
+// ExcluirCliente apaga o cliente e, em cascata, itens, notas e importações; false se não existia.
+func ExcluirCliente(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
+	tag, err := tx.Exec(ctx, `delete from clientes where id=$1`, id)
+	return tag.RowsAffected() == 1, err
+}
+
+func ObterItem(ctx context.Context, tx pgx.Tx, id string) (Item, error) {
+	return scanItem(tx.QueryRow(ctx, `select `+colsItem+` from itens where id=$1`, id))
+}
+
+// RegistrarImportacao guarda o histórico de uma importação (ignorados em JSON).
+func RegistrarImportacao(ctx context.Context, tx pgx.Tx, clienteID, tipo string, arquivos, novos, atualizados int, ignorados any) error {
+	ign, err := json.Marshal(ignorados)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `insert into importacoes (cliente_id, tipo, arquivos, itens_novos, itens_atualizados, ignorados)
+		values ($1,$2,$3,$4,$5,$6)`, clienteID, tipo, arquivos, novos, atualizados, string(ign))
+	return err
 }

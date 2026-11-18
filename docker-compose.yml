@@ -29,5 +29,19 @@ services:
       interval: 15s
       retries: 10
       start_period: 40s
+  api:
+    build: api
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      TABELAS_DB: /tabelas/calculadora-pro.db
+      CALC_REGULAR_URL: http://calc-regular:8080
+      CALC_SIMPLES_URL: http://calc-simples:8082
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      PORT: "8090"
+    volumes: [tabelas:/tabelas:ro]
+    depends_on:
+      calc-regular: {condition: service_healthy}
+      calc-simples: {condition: service_healthy}
 volumes:
   tabelas:

@@ -206,3 +206,43 @@ func TestRegistrarNotasEAliquotas(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestClienteAtualizarExcluirEImportacao(t *testing.T) {
+	s, ctx := novoStore(t)
+	a, b := novoUsuario(t, s, ctx), novoUsuario(t, s, ctx)
+	c := novoCliente(t, s, ctx, a)
+	err := s.ComoUsuario(ctx, b, func(tx pgx.Tx) error {
+		if _, err := ObterCliente(ctx, tx, c.ID); err != pgx.ErrNoRows {
+			t.Errorf("B obteve cliente de A: %v", err)
+		}
+		if ok, err := ExcluirCliente(ctx, tx, c.ID); ok || err != nil {
+			t.Errorf("B excluiu cliente de A: %v %v", ok, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.ComoUsuario(ctx, a, func(tx pgx.Tx) error {
+		c.RazaoSocial = "Acme 2"
+		got, err := AtualizarCliente(ctx, tx, c)
+		if err != nil || got.RazaoSocial != "Acme 2" {
+			t.Errorf("atualizar: %+v %v", got, err)
+		}
+		if err := RegistrarImportacao(ctx, tx, c.ID, "xml", 2, 1, 0, []map[string]string{{"arquivo": "a.xml"}}); err != nil {
+			t.Error(err)
+		}
+		var n int
+		tx.QueryRow(ctx, `select count(*) from importacoes where cliente_id=$1 and ignorados->0->>'arquivo'='a.xml'`, c.ID).Scan(&n)
+		if n != 1 {
+			t.Errorf("importacao: %d", n)
+		}
+		if ok, err := ExcluirCliente(ctx, tx, c.ID); !ok || err != nil {
+			t.Errorf("excluir: %v %v", ok, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

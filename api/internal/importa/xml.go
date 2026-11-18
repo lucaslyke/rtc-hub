@@ -21,7 +21,10 @@ type Nota struct {
 	Itens               []ItemBruto
 }
 
-type Ignorado struct{ Arquivo, Motivo string }
+type Ignorado struct {
+	Arquivo string `json:"arquivo"`
+	Motivo  string `json:"motivo"`
+}
 
 var (
 	ErrNaoNota     = errors.New("não é nota fiscal")

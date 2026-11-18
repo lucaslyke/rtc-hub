@@ -25,8 +25,12 @@ const (
 )
 
 type Opcao struct {
-	CST, CClassTrib, Descricao, Fundamentacao, Condicao string
-	PercReducao                                         float64
+	CST           string  `json:"cst"`
+	CClassTrib    string  `json:"cClassTrib"`
+	Descricao     string  `json:"descricao"`
+	Fundamentacao string  `json:"fundamentacao"`
+	Condicao      string  `json:"condicao"`
+	PercReducao   float64 `json:"percReducao"`
 }
 
 type Classificacao struct {

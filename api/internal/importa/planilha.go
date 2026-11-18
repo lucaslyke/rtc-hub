@@ -17,8 +17,8 @@ import (
 type Mapeamento struct{ Descricao, Codigo, NCM, NBS, Valor int }
 
 type Previa struct {
-	Cabecalho []string
-	Linhas    [][]string // até 5 linhas
+	Cabecalho []string   `json:"cabecalho"`
+	Linhas    [][]string `json:"linhas"` // até 5 linhas
 }
 
 func lerLinhas(nome string, r io.Reader) ([][]string, error) {

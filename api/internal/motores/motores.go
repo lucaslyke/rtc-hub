@@ -26,12 +26,16 @@ type ItemCalc struct {
 }
 
 type Resultado struct {
-	ItemID                            string
-	Estado                            string // do motor, ou "NAO_SUPORTADO"
-	Simulacao                         bool
-	VCBS, VIBS, VIS, PRedCBS, PRedIBS string
-	Mensagem                          string
-	Bruto                             json.RawMessage
+	ItemID    string          `json:"itemId"`
+	Estado    string          `json:"estado"` // do motor, ou "NAO_SUPORTADO"
+	Simulacao bool            `json:"simulacao"`
+	VCBS      string          `json:"vCbs"`
+	VIBS      string          `json:"vIbs"`
+	VIS       string          `json:"vIs"`
+	PRedCBS   string          `json:"pRedCbs"`
+	PRedIBS   string          `json:"pRedIbs"`
+	Mensagem  string          `json:"mensagem"`
+	Bruto     json.RawMessage `json:"bruto,omitempty"`
 }
 
 type Motores struct {

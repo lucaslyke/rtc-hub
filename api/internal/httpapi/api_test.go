@@ -1,0 +1,396 @@
+package httpapi
+
+import (
+	"bytes"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"rtchub/internal/motores"
+	"rtchub/internal/store"
+	"rtchub/internal/tabelas"
+)
+
+const testdata = "../importa/testdata/"
+
+type ambiente struct {
+	t     *testing.T
+	srv   *httptest.Server
+	st    *store.Store
+	chave *ecdsa.PrivateKey
+	user  string
+}
+
+// novoAmbiente sobe a api com chave JWT do teste, Supabase local e um motor falso.
+func novoAmbiente(t *testing.T, motor http.HandlerFunc) *ambiente {
+	url := os.Getenv("SUPABASE_DB_URL")
+	if url == "" {
+		t.Skip("SUPABASE_DB_URL não definida")
+	}
+	ctx := context.Background()
+	st, err := store.Conectar(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	tab, err := tabelas.Abrir("../../../.data/calculadora-pro.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { tab.Close() })
+	if motor == nil {
+		motor = func(w http.ResponseWriter, r *http.Request) { http.Error(w, "x", 500) }
+	}
+	fm := httptest.NewServer(motor)
+	t.Cleanup(fm.Close)
+
+	chave, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	s := &Servidor{
+		Store: st, Tabelas: tab, Motores: motores.Novo(fm.URL, fm.URL, nil),
+		Keyfunc: func(*jwt.Token) (any, error) { return &chave.PublicKey, nil },
+	}
+	srv := httptest.NewServer(s.Rotas())
+	t.Cleanup(srv.Close)
+
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close(ctx) })
+	user := uuid.NewString()
+	if _, err := conn.Exec(ctx, `insert into auth.users (id, email, aud, role, instance_id)
+		values ($1, $2, 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000')`, user, user+"@teste.local"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Exec(ctx, `delete from auth.users where id=$1`, user) })
+	return &ambiente{t: t, srv: srv, st: st, chave: chave, user: user}
+}
+
+func (a *ambiente) token(aud string) string {
+	tk := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+		"sub": a.user, "aud": aud, "role": "authenticated", "exp": time.Now().Add(time.Hour).Unix(),
+	})
+	s, err := tk.SignedString(a.chave)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	return s
+}
+
+// req faz a chamada autenticada e decodifica a resposta em out (se não for nil).
+func (a *ambiente) req(metodo, caminho, tipo string, corpo io.Reader, out any) int {
+	a.t.Helper()
+	r, _ := http.NewRequest(metodo, a.srv.URL+caminho, corpo)
+	r.Header.Set("Authorization", "Bearer "+a.token("authenticated"))
+	if tipo != "" {
+		r.Header.Set("Content-Type", tipo)
+	}
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if out != nil && resp.StatusCode < 300 {
+		if err := json.Unmarshal(b, out); err != nil {
+			a.t.Fatalf("%s %s: %v: %s", metodo, caminho, err, b)
+		}
+	}
+	if resp.StatusCode >= 300 && out != nil {
+		a.t.Logf("%s %s → %d %s", metodo, caminho, resp.StatusCode, b)
+	}
+	return resp.StatusCode
+}
+
+func (a *ambiente) json(metodo, caminho string, in, out any) int {
+	b, _ := json.Marshal(in)
+	return a.req(metodo, caminho, "application/json", bytes.NewReader(b), out)
+}
+
+func (a *ambiente) cliente(regime string) store.Cliente {
+	var c store.Cliente
+	if st := a.json("POST", "/clientes", map[string]any{
+		"razaoSocial": "Padaria", "cnpj": "11.222.333/0001-81", "regime": regime, "uf": "SP", "municipioIbge": 3550308,
+	}, &c); st != 201 {
+		a.t.Fatalf("criar cliente: %d", st)
+	}
+	return c
+}
+
+func (a *ambiente) importar(clienteID string, arquivos ...string) resultadoImportacao {
+	return a.importarCom(clienteID, "", arquivos...)
+}
+
+func (a *ambiente) importarCom(clienteID, mapeamento string, arquivos ...string) (res resultadoImportacao) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if mapeamento != "" {
+		mw.WriteField("mapeamento", mapeamento)
+	}
+	for _, nome := range arquivos {
+		b, err := os.ReadFile(testdata + nome)
+		if err != nil {
+			a.t.Fatal(err)
+		}
+		fw, _ := mw.CreateFormFile("arquivos[]", nome)
+		fw.Write(b)
+	}
+	mw.Close()
+	if st := a.req("POST", "/clientes/"+clienteID+"/importar", mw.FormDataContentType(), &buf, &res); st != 200 {
+		a.t.Fatalf("importar: %d", st)
+	}
+	return
+}
+
+type listaItens struct {
+	Itens    []store.Item   `json:"itens"`
+	Contagem map[string]int `json:"contagem"`
+}
+
+func (a *ambiente) itens(clienteID, situacao string) (l listaItens) {
+	if st := a.req("GET", "/clientes/"+clienteID+"/itens?situacao="+situacao, "", nil, &l); st != 200 {
+		a.t.Fatalf("itens: %d", st)
+	}
+	return
+}
+
+func porCodigo(its []store.Item, codigo string) store.Item {
+	for _, i := range its {
+		if i.Codigo == codigo {
+			return i
+		}
+	}
+	return store.Item{}
+}
+
+func TestSemTokenDa401(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	for _, h := range []string{"", "Bearer lixo", "Bearer " + a.token("outro")} {
+		r, _ := http.NewRequest("GET", a.srv.URL+"/clientes", nil)
+		if h != "" {
+			r.Header.Set("Authorization", h)
+		}
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 401 {
+			t.Errorf("%q: status %d, quer 401", h, resp.StatusCode)
+		}
+	}
+	resp, err := http.Get(a.srv.URL + "/health/live")
+	if err != nil || resp.StatusCode != 200 {
+		t.Errorf("health/live: %v %v", resp, err)
+	}
+}
+
+func TestImportarNFeSugere(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	res := a.importar(c.ID, "nfe_saida.xml")
+	if res.ItensNovos != 2 {
+		t.Fatalf("itensNovos = %d, quer 2 (%+v)", res.ItensNovos, res)
+	}
+	l := a.itens(c.ID, "")
+	arroz := porCodigo(l.Itens, "A1")
+	if arroz.Situacao == "" || arroz.CClassTrib == "" && arroz.Situacao != "revisar" {
+		t.Errorf("arroz sem sugestão: %+v", arroz)
+	}
+	soma := 0
+	for _, n := range l.Contagem {
+		soma += n
+	}
+	if soma != 2 {
+		t.Errorf("contagem: %v", l.Contagem)
+	}
+	f := a.itens(c.ID, arroz.Situacao)
+	if len(f.Itens) == 0 || f.Itens[0].Situacao != arroz.Situacao {
+		t.Errorf("filtro por situação: %+v", f.Itens)
+	}
+}
+
+func TestImportarNotaRepetidaNaoDuplica(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	a.importar(c.ID, "nfe_saida.xml")
+	res := a.importar(c.ID, "nfe_saida.xml")
+	if res.NotasRepetidas != 1 || res.ItensAtualizados != 0 || res.ItensNovos != 0 {
+		t.Errorf("2ª importação: %+v", res)
+	}
+	for _, i := range a.itens(c.ID, "").Itens {
+		if i.Ocorrencias != 1 {
+			t.Errorf("%s: ocorrencias = %d", i.Codigo, i.Ocorrencias)
+		}
+	}
+}
+
+func TestImportarNFSeSemNBSOfereceOpcoes(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	res := a.importar(c.ID, "nfse_sem_nbs.xml", "nfe_entrada.xml")
+	if res.ItensNovos != 1 || len(res.Ignorados) != 1 || res.Ignorados[0].Arquivo != "nfe_entrada.xml" {
+		t.Fatalf("importação: %+v", res)
+	}
+	it := a.itens(c.ID, "").Itens[0]
+	if it.Situacao != "revisar" || !strings.Contains(string(it.Opcoes), "cClassTrib") {
+		t.Errorf("NFS-e sem NBS: %+v %s", it, it.Opcoes)
+	}
+}
+
+func seed(t *testing.T, a *ambiente, clienteID string, its ...store.ItemEntrada) map[string]string {
+	ids := map[string]string{}
+	err := a.st.ComoUsuario(context.Background(), a.user, func(tx pgx.Tx) error {
+		if _, _, err := store.UpsertItens(context.Background(), tx, clienteID, its); err != nil {
+			return err
+		}
+		l, err := store.ListarItens(context.Background(), tx, clienteID)
+		for _, i := range l {
+			ids[i.Codigo] = i.ID
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+func TestConfirmarEmLote(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	ids := seed(t, a, c.ID,
+		store.ItemEntrada{Codigo: "P", NCM: "10063021", Situacao: "provavel", CST: "200", CClassTrib: "200003"},
+		store.ItemEntrada{Codigo: "R", NCM: "22030000", Situacao: "revisar"})
+	var out struct{ Confirmados int64 }
+	if st := a.json("POST", "/clientes/"+c.ID+"/itens/confirmar", map[string]any{"ids": []string{ids["P"], ids["R"]}}, &out); st != 200 || out.Confirmados != 1 {
+		t.Fatalf("confirmar: %d %+v", st, out)
+	}
+	its := a.itens(c.ID, "").Itens
+	if p := porCodigo(its, "P"); p.Situacao != "ok" || p.Origem != "confirmado" {
+		t.Errorf("P: %+v", p)
+	}
+	if r := porCodigo(its, "R"); r.Situacao != "revisar" || r.Origem != "sugerido" {
+		t.Errorf("R: %+v", r)
+	}
+}
+
+func TestPatchViraManual(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	ids := seed(t, a, c.ID, store.ItemEntrada{Codigo: "R", NCM: "22030000", Situacao: "revisar", Condicao: "x"})
+	var it store.Item
+	if st := a.json("PATCH", "/itens/"+ids["R"], map[string]any{"cst": "000", "cClassTrib": "000001", "isCst": "000", "isCClassTrib": "000001"}, &it); st != 200 {
+		t.Fatalf("patch: %d", st)
+	}
+	if it.Origem != "manual" || it.Situacao != "ok" || it.CClassTrib != "000001" || it.ISCClassTrib != "000001" || it.Condicao != "" {
+		t.Errorf("patch: %+v", it)
+	}
+	if st := a.json("PATCH", "/itens/"+ids["R"], map[string]any{"cst": "0", "cClassTrib": "000001"}, nil); st != 400 {
+		t.Errorf("CST inválido: %d, quer 400", st)
+	}
+	if st := a.json("PATCH", "/itens/"+uuid.NewString(), map[string]any{"cst": "000", "cClassTrib": "000001"}, nil); st != 404 {
+		t.Errorf("item inexistente: %d, quer 404", st)
+	}
+}
+
+func TestCalcularSoItensProntos(t *testing.T) {
+	var recebidos int
+	a := novoAmbiente(t, func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Itens []any }
+		json.NewDecoder(r.Body).Decode(&req)
+		recebidos += len(req.Itens)
+		fmt.Fprint(w, `{"objetos":[{"nObj":1,"estadoItem":"CALCULO_SIMULADO","tribCalc":{"IBSCBS":{"gIBSCBS":{"vIBS":"1.00","gCBS":{"vCBS":"2.00"}}}}}]}`)
+	})
+	c := a.cliente("regular")
+	ids := seed(t, a, c.ID,
+		store.ItemEntrada{Codigo: "OK", NCM: "10063021", Valor: 100, Situacao: "ok", CST: "000", CClassTrib: "000001"},
+		store.ItemEntrada{Codigo: "R", NCM: "22030000", Situacao: "revisar"})
+	var out struct {
+		Resultados []motores.Resultado
+		Pendentes  []store.Item
+	}
+	if st := a.json("POST", "/clientes/"+c.ID+"/calcular", map[string]any{"ano": 2027}, &out); st != 200 {
+		t.Fatalf("calcular: %d", st)
+	}
+	if recebidos != 1 || len(out.Resultados) != 1 || out.Resultados[0].ItemID != ids["OK"] || out.Resultados[0].VCBS != "2.00" {
+		t.Errorf("resultados: %d %+v", recebidos, out.Resultados)
+	}
+	if len(out.Pendentes) != 1 || out.Pendentes[0].ID != ids["R"] {
+		t.Errorf("pendentes: %+v", out.Pendentes)
+	}
+	if ok := porCodigo(a.itens(c.ID, "").Itens, "OK"); !strings.Contains(string(ok.Calculos), `"2027"`) {
+		t.Errorf("cálculo não salvo: %s", ok.Calculos)
+	}
+}
+
+func TestCalcularMotorForaDa502(t *testing.T) {
+	a := novoAmbiente(t, nil) // motor falso responde 500
+	c := a.cliente("regular")
+	seed(t, a, c.ID, store.ItemEntrada{Codigo: "OK", NCM: "10063021", Valor: 100, Situacao: "ok", CST: "000", CClassTrib: "000001"})
+	r, _ := http.NewRequest("POST", a.srv.URL+"/clientes/"+c.ID+"/calcular", strings.NewReader(`{"ano":2027}`))
+	r.Header.Set("Authorization", "Bearer "+a.token("authenticated"))
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 502 || !strings.Contains(string(b), "Os motores de cálculo da Receita não responderam") {
+		t.Errorf("%d %s", resp.StatusCode, b)
+	}
+}
+
+func TestClientesCRUDEAliquotas(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	c.RazaoSocial = "Padaria Nova"
+	var got store.Cliente
+	if st := a.json("PUT", "/clientes/"+c.ID, c, &got); st != 200 || got.RazaoSocial != "Padaria Nova" {
+		t.Errorf("put: %d %+v", st, got)
+	}
+	if st := a.json("POST", "/clientes", map[string]any{"razaoSocial": "X", "cnpj": "123", "regime": "regular", "uf": "SP", "municipioIbge": 1}, nil); st != 400 {
+		t.Errorf("cnpj inválido: %d", st)
+	}
+	if st := a.req("DELETE", "/clientes/"+c.ID, "", nil, nil); st != 204 {
+		t.Errorf("delete: %d", st)
+	}
+	if st := a.req("GET", "/clientes/"+c.ID, "", nil, nil); st != 404 {
+		t.Errorf("get após delete: %d", st)
+	}
+	var al store.AliquotasEst
+	if st := a.json("PUT", "/aliquotas", map[string]any{"cbs": 9, "ibsUf": 10, "ibsMun": 3, "isAdValorem": 0}, nil); st != 204 {
+		t.Errorf("put aliquotas: %d", st)
+	}
+	if st := a.req("GET", "/aliquotas", "", nil, &al); st != 200 || al.CBS != 9 || al.IBSUF != 10 {
+		t.Errorf("get aliquotas: %d %+v", st, al)
+	}
+}
+
+func TestImportarPlanilha(t *testing.T) {
+	a := novoAmbiente(t, nil)
+	c := a.cliente("regular")
+	res := a.importarCom(c.ID, `{"codigo":0,"descricao":1,"ncm":2,"valor":3}`, "excel_br.csv")
+	if res.ItensNovos != 1 || len(res.Ignorados) != 1 {
+		t.Fatalf("planilha: %+v", res)
+	}
+	it := a.itens(c.ID, "").Itens[0]
+	if it.Descricao != "Pão francês" || it.NBS != "" || it.UltimoValor != 1234.56 || it.Situacao == "" {
+		t.Errorf("item: %+v", it)
+	}
+}
