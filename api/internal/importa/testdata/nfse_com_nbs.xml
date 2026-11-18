@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NFSe xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.00"><infNFSe Id="NFS3550308226011122233300018100001000000000000001"><emit><CNPJ>11222333000181</CNPJ></emit>
+<valores><vLiq>1500.00</vLiq></valores>
+<DPS><infDPS><serv><cServ><cTribNac>010101</cTribNac><cNBS>115022000</cNBS><xDescServ>Desenvolvimento de software</xDescServ></cServ></serv><valores><vServPrest><vServ>1500.00</vServ></vServPrest></valores></infDPS></DPS></infNFSe></NFSe>
