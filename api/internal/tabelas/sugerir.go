@@ -188,7 +188,7 @@ func (t *Tabelas) Sugerir(ctx context.Context, tipo Tipo, codigo string, data st
 				return Sugestao{}, err
 			}
 			if o != nil && !slices.ContainsFunc(ibs, func(x Opcao) bool { return x.CClassTrib == c }) {
-				o.Condicao = strings.TrimSuffix(condicaoAnvisa+". "+o.Condicao, ". ")
+				o.Condicao = condicaoAnvisa
 				ibs = append(ibs, *o)
 			}
 		}

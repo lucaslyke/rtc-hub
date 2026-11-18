@@ -158,7 +158,7 @@ func TestMedicamentoSempreRevisar(t *testing.T) {
 		for _, o := range s.IBSCBS.Opcoes {
 			if o.CClassTrib == "200009" || o.CClassTrib == "200032" {
 				achou[o.CClassTrib] = true
-				if !strings.HasPrefix(o.Condicao, condicaoAnvisa) || o.CST != "200" {
+				if o.Condicao != condicaoAnvisa || o.CST != "200" {
 					t.Errorf("%s %+v", ncm, o)
 				}
 			}

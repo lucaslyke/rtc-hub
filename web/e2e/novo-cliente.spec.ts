@@ -28,15 +28,18 @@ test("editar e excluir um cliente", async ({ page }) => {
   await page.getByRole("button", { name: "Salvar cliente" }).click();
   await page.getByRole("link", { name: "Loja Antiga" }).click();
 
+  // o Next mantém a tela anterior montada e escondida: só os campos visíveis são da tela atual
+  const razao = page.getByLabel("Razão social").filter({ visible: true });
   await page.getByRole("link", { name: "Editar cliente" }).click();
-  await expect(page.getByLabel("Razão social")).toHaveValue("Loja Antiga");
-  await page.getByLabel("Razão social").fill("Loja Nova");
-  await page.getByRole("button", { name: "Salvar cliente" }).click();
+  await expect(page.getByRole("button", { name: "Excluir cliente" })).toBeVisible();
+  await expect(razao).toHaveValue("Loja Antiga");
+  await razao.fill("Loja Nova");
+  await page.getByRole("button", { name: "Salvar cliente" }).filter({ visible: true }).click();
   await expect(page.getByRole("heading", { name: /Loja Nova/ })).toBeVisible();
 
   await page.getByRole("link", { name: "Editar cliente" }).click();
   page.once("dialog", (d) => d.accept());
-  await page.getByRole("button", { name: "Excluir cliente" }).click();
+  await page.getByRole("button", { name: "Excluir cliente" }).filter({ visible: true }).click();
   await page.waitForURL("**/clientes");
   await expect(page.getByText("Nenhum cliente cadastrado ainda")).toBeVisible();
 });
