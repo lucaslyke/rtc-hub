@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8090";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL!;
+if (!API_URL) throw new Error("Defina NEXT_PUBLIC_API_URL (veja .env.example).");
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const { data } = await supabase.auth.getSession();
@@ -16,6 +17,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (r.status === 401) {
     await supabase.auth.signOut();
     window.location.href = "/login";
+    return new Promise<T>(() => {}); // a página está saindo; não propaga erro
   }
   if (!r.ok) {
     const corpo = await r.json().catch(() => ({}));

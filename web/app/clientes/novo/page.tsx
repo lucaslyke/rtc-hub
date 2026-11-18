@@ -17,9 +17,16 @@ export default function NovoCliente() {
     const txt = (k: string) => String(f.get(k) ?? "").trim();
     const pct = (k: string) => Number(txt(k).replace(",", "."));
     const corpo = {
-      razaoSocial: txt("razao"), cnpj: txt("cnpj"), regime, uf: txt("uf").toUpperCase(), municipioIbge: Number(txt("ibge")),
+      razaoSocial: txt("razao"), cnpj: txt("cnpj").replace(/\D/g, ""), regime, uf: txt("uf").toUpperCase(), municipioIbge: Number(txt("ibge")),
       ...(regime === "simples" && { cAtivSn: txt("cativ"), pIbsSn: pct("pibs"), pCbsSn: pct("pcbs") }),
     };
+    const num = (v: number) => Number.isFinite(v);
+    if (corpo.cnpj.length !== 14) return setErro("CNPJ deve ter 14 dígitos.");
+    if (!/^\d{7}$/.test(txt("ibge"))) return setErro("Código IBGE do município deve ter 7 dígitos.");
+    if (regime === "simples") {
+      if (!/^\d{2}$/.test(txt("cativ"))) return setErro("Atividade do Simples deve ter 2 dígitos (01 a 15).");
+      if (!num(pct("pibs")) || !num(pct("pcbs")) || !txt("pibs") || !txt("pcbs")) return setErro("Informe as alíquotas efetivas de IBS e CBS como número.");
+    }
     setErro("");
     setOcupado(true);
     try {

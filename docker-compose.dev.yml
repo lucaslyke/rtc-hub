@@ -10,4 +10,6 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:54322/postgres
       SUPABASE_URL: http://host.docker.internal:54321
-      CORS_ORIGIN: http://localhost:5173
+      CORS_ORIGIN: http://localhost:3000
+  web:
+    ports: ["127.0.0.1:3000:3000"]

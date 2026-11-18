@@ -26,7 +26,7 @@ export default function Clientes() {
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Razão social</th><th className="px-4 py-3">CNPJ</th><th className="px-4 py-3">Regime</th>
-                <th className="px-4 py-3 text-right">Confirmados / prováveis</th><th className="px-4 py-3 text-right">A revisar</th><th className="px-4 py-3 text-right">Inválidos</th>
+                <th className="px-4 py-3 text-right">Prontos</th><th className="px-4 py-3 text-right">Prováveis (confirmar)</th><th className="px-4 py-3 text-right">Revisar</th><th className="px-4 py-3 text-right">Inválidos</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -35,7 +35,8 @@ export default function Clientes() {
                   <td className="px-4 py-3"><Link href={`/clientes/${c.id}`} className="font-medium text-teal-800 hover:underline">{c.razaoSocial}</Link></td>
                   <td className="px-4 py-3 tabular-nums text-slate-600">{cnpj(c.cnpj)}</td>
                   <td className="px-4 py-3 text-slate-600">{c.regime === "simples" ? "Simples Nacional" : "Regime regular"}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-green-700">✓ {c.contagem.ok + c.contagem.provavel}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-green-700">✓ {c.contagem.ok}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-sky-700">? {c.contagem.provavel}</td>
                   <td className="px-4 py-3 text-right tabular-nums text-amber-700">⚠ {c.contagem.revisar}</td>
                   <td className="px-4 py-3 text-right tabular-nums text-red-700">✗ {c.contagem.invalido}</td>
                 </tr>
