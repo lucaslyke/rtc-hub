@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    defaults: {run: {working-directory: api}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version-file: api/go.mod, cache-dependency-path: api/go.sum}
+      # os testes de SQLite (.data) e de Supabase (SUPABASE_*) são pulados sem o ambiente local
+      - run: go test ./...
+
+  web:
+    runs-on: ubuntu-latest
+    defaults: {run: {working-directory: web}}
+    env: # valores fictícios: o build só exige que existam
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-dummy
+      NEXT_PUBLIC_API_URL: http://localhost:8090
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 24, cache: npm, cache-dependency-path: web/package-lock.json}
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  imagens:
+    needs: [api, web]
+    runs-on: ubuntu-latest
+    permissions: {contents: read, packages: write}
+    strategy:
+      matrix: {imagem: [api, web]}
+    steps:
+      - uses: actions/checkout@v4
+      - id: nome
+        run: echo "tag=ghcr.io/${GITHUB_REPOSITORY,,}-${{ matrix.imagem }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        if: github.ref == 'refs/heads/main'
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.imagem }}
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.nome.outputs.tag }}:latest,${{ steps.nome.outputs.tag }}:${{ github.sha }}
+          # a imagem web embute as NEXT_PUBLIC_*: defina as variables do repositório para publicar uma imagem utilizável
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL || 'http://127.0.0.1:54321' }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'ci-dummy' }}
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:8090' }}
