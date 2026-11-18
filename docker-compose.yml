@@ -43,5 +43,13 @@ services:
     depends_on:
       calc-regular: {condition: service_healthy}
       calc-simples: {condition: service_healthy}
+  web:
+    build:
+      context: web
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+    depends_on: [api]
 volumes:
   tabelas:
