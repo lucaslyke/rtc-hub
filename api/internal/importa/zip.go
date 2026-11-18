@@ -22,7 +22,7 @@ func LerArquivos(nome string, r io.Reader, cnpjCliente string) ([]Nota, []Ignora
 		case err != nil:
 			ign = append(ign, Ignorado{arq, err.Error()})
 		case n.EmitenteCNPJ != cnpjCliente:
-			ign = append(ign, Ignorado{arq, "emitente diferente do cliente"})
+			ign = append(ign, Ignorado{arq, "nota emitida por " + n.EmitenteCNPJ + ", não por este cliente (nota de entrada?)"})
 		default:
 			notas = append(notas, n)
 		}
@@ -63,7 +63,7 @@ func LerArquivos(nome string, r io.Reader, cnpjCliente string) ([]Nota, []Ignora
 			rc.Close()
 			restante -= int64(len(dados))
 			if restante < 0 {
-				ign = append(ign, Ignorado{f.Name, "limite de 50 MB descompactados excedido"})
+				ign = append(ign, Ignorado{f.Name, "limite de 50 MB descompactados excedido"}, Ignorado{nome, "demais arquivos do ZIP não lidos (limite de 50 MB)"})
 				break
 			}
 			if err != nil {

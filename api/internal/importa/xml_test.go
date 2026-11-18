@@ -1,6 +1,8 @@
 package importa
 
 import (
+	"archive/zip"
+	"bytes"
 	"os"
 	"testing"
 )
@@ -56,7 +58,7 @@ func TestZipComArquivosRuins(t *testing.T) {
 	for _, i := range ign {
 		got[i.Arquivo] = i.Motivo
 	}
-	want := map[string]string{"nfe_entrada.xml": "emitente diferente do cliente", "evento_cancelamento.xml": "não é nota fiscal", "corrompido.xml": "XML inválido"}
+	want := map[string]string{"nfe_entrada.xml": "nota emitida por 99888777000166, não por este cliente (nota de entrada?)", "evento_cancelamento.xml": "não é nota fiscal", "corrompido.xml": "XML inválido"}
 	if len(got) != 3 {
 		t.Fatalf("%v", got)
 	}
@@ -64,5 +66,20 @@ func TestZipComArquivosRuins(t *testing.T) {
 		if got[k] != v {
 			t.Errorf("%s: %q", k, got[k])
 		}
+	}
+}
+
+func TestZipLimite50MB(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, n := range []string{"a.xml", "b.xml"} {
+		w, _ := zw.Create(n)
+		w.Write(make([]byte, 30<<20)) // zeros comprimem: o ZIP é pequeno, o conteúdo não
+	}
+	zw.Close()
+	_, ign := LerArquivos("grande.zip", &buf, cnpj)
+	last := ign[len(ign)-1]
+	if last != (Ignorado{"grande.zip", "demais arquivos do ZIP não lidos (limite de 50 MB)"}) {
+		t.Errorf("%v", ign)
 	}
 }

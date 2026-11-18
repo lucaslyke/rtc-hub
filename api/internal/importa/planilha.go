@@ -66,10 +66,16 @@ func PreviaPlanilha(nome string, r io.Reader) (Previa, error) {
 var milharBR = regexp.MustCompile(`^\d{1,3}(\.\d{3})+$`)
 
 // parseValor: vazio = 0; sem vírgula, "1.234"/"1.234.567" são milhares BR; senão ponto decimal.
-func parseValor(s string) (float64, bool) {
+// xlsx=true: a célula vem crua do Excel (ponto decimal), então tenta ParseFloat antes.
+func parseValor(s string, xlsx bool) (float64, bool) {
 	s = strings.NewReplacer("R$", "", " ", "", "\u00a0", "").Replace(s)
 	if s == "" {
 		return 0, true
+	}
+	if xlsx {
+		if v, err := strconv.ParseFloat(s, 64); err == nil {
+			return v, true
+		}
 	}
 	if strings.Contains(s, ",") || milharBR.MatchString(s) {
 		s = strings.ReplaceAll(strings.ReplaceAll(s, ".", ""), ",", ".")
@@ -78,7 +84,22 @@ func parseValor(s string) (float64, bool) {
 	return v, err == nil
 }
 
+var semPontuacao = strings.NewReplacer(".", "", "-", "", " ", "")
+
+// codigoFiscal tira pontuação e repõe zeros à esquerda que o Excel perde em célula numérica.
+func codigoFiscal(s string, tam int) string {
+	s = semPontuacao.Replace(s)
+	if s == "" || strings.Trim(s, "0123456789") != "" {
+		return s
+	}
+	if len(s) < tam && len(s) >= tam-2 {
+		s = strings.Repeat("0", tam-len(s)) + s
+	}
+	return s
+}
+
 func LerPlanilha(nome string, r io.Reader, m Mapeamento) ([]ItemBruto, []Ignorado, error) {
+	xlsx := strings.HasSuffix(strings.ToLower(nome), ".xlsx")
 	rows, err := lerLinhas(nome, r)
 	if err != nil {
 		return nil, nil, err
@@ -92,14 +113,17 @@ func LerPlanilha(nome string, r io.Reader, m Mapeamento) ([]ItemBruto, []Ignorad
 			}
 			return strings.TrimSpace(row[c])
 		}
-		it := ItemBruto{Codigo: col(m.Codigo), Descricao: col(m.Descricao), NCM: col(m.NCM), NBS: col(m.NBS), Origem: "planilha"}
+		it := ItemBruto{Codigo: col(m.Codigo), Descricao: col(m.Descricao), NCM: codigoFiscal(col(m.NCM), 8), NBS: codigoFiscal(col(m.NBS), 9), Origem: "planilha"}
+		if it.Codigo == "" { // sem código, a descrição identifica o item (senão as linhas se fundem)
+			it.Codigo = it.Descricao
+		}
 		if it.NCM == "" && it.NBS == "" {
 			if strings.TrimSpace(strings.Join(row, "")) != "" { // linha vazia não é item
 				ign = append(ign, Ignorado{nome, "linha " + strconv.Itoa(i+2) + ": sem NCM/NBS"})
 			}
 			continue
 		}
-		v, ok := parseValor(col(m.Valor))
+		v, ok := parseValor(col(m.Valor), xlsx)
 		if !ok {
 			ign = append(ign, Ignorado{nome, "linha " + strconv.Itoa(i+2) + ": valor inválido"})
 			continue
