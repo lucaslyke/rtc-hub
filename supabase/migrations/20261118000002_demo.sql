@@ -56,9 +56,9 @@ select cron.schedule('limpar-demos', '0 4 * * *',
 
 insert into clientes select (jsonb_populate_record(null::clientes, r || '{"user_id": "00000000-0000-0000-0000-00000000de00"}')).*
 from jsonb_array_elements($semente$[
-{"id": "de8f076f-c687-49a2-b982-27a663b6d51c", "uf": "SP", "cnpj": "16180339000157", "regime": "regular", "p_cbs_sn": null, "p_ibs_sn": null, "c_ativ_sn": null, "criado_em": "2026-11-18T17:43:56.743674+00:00", "razao_social": "Escola Aprender Ltda", "municipio_ibge": 3547809},
-{"id": "173f344f-b056-4ec8-923a-ac768ebdfa53", "uf": "SP", "cnpj": "27182818000129", "regime": "regular", "p_cbs_sn": null, "p_ibs_sn": null, "c_ativ_sn": null, "criado_em": "2026-11-18T17:43:55.614716+00:00", "razao_social": "Farmácia Saúde Ltda", "municipio_ibge": 3550308},
-{"id": "3f2a0e81-7d44-4095-861f-99994ccf8c63", "uf": "SP", "cnpj": "31415926000171", "regime": "simples", "p_cbs_sn": 3, "p_ibs_sn": 1.25, "c_ativ_sn": "01", "criado_em": "2026-11-18T17:43:54.900967+00:00", "razao_social": "Padaria Pão Quente Ltda", "municipio_ibge": 3509502}
+{"id": "de8f076f-c687-49a2-b982-27a663b6d51c", "uf": "SP", "cnpj": "81214139000130", "regime": "regular", "p_cbs_sn": null, "p_ibs_sn": null, "c_ativ_sn": null, "criado_em": "2026-11-18T17:43:56.743674+00:00", "razao_social": "Escola Aprender Ltda", "municipio_ibge": 3547809},
+{"id": "173f344f-b056-4ec8-923a-ac768ebdfa53", "uf": "SP", "cnpj": "87832350000100", "regime": "regular", "p_cbs_sn": null, "p_ibs_sn": null, "c_ativ_sn": null, "criado_em": "2026-11-18T17:43:55.614716+00:00", "razao_social": "Farmácia Saúde Ltda", "municipio_ibge": 3550308},
+{"id": "3f2a0e81-7d44-4095-861f-99994ccf8c63", "uf": "SP", "cnpj": "88900160000138", "regime": "simples", "p_cbs_sn": 3, "p_ibs_sn": 1.25, "c_ativ_sn": "01", "criado_em": "2026-11-18T17:43:54.900967+00:00", "razao_social": "Padaria Pão Quente Ltda", "municipio_ibge": 3509502}
 ]$semente$::jsonb) r;
 
 insert into itens select (jsonb_populate_record(null::itens, r || '{"user_id": "00000000-0000-0000-0000-00000000de00"}')).*

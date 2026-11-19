@@ -59,7 +59,7 @@ type cliente struct {
 func f(v float64) *float64 { return &v }
 
 var clientes = []cliente{
-	{Razao: "Padaria Pão Quente Ltda", CNPJ: cnpj("31415926"), Regime: "simples", UF: "SP", Mun: 3509502, CAtivSN: "01", PIBSSN: f(1.25), PCBSSN: f(3.00), mod: "65",
+	{Razao: "Padaria Pão Quente Ltda", CNPJ: cnpj("88900160"), Regime: "simples", UF: "SP", Mun: 3509502, CAtivSN: "01", PIBSSN: f(1.25), PCBSSN: f(3.00), mod: "65",
 		produtos: []produto{
 			{"001", "Pão francês (kg)", "19059090", 18.90},
 			{"002", "Pão de forma tradicional 500g", "19059010", 9.50},
@@ -87,7 +87,7 @@ var clientes = []cliente{
 			{"024", "Cigarro maço 20un", "24022000", 11.50},
 			{"025", "Iogurte natural 170g", "04039000", 3.49},
 		}},
-	{Razao: "Farmácia Saúde Ltda", CNPJ: cnpj("27182818"), Regime: "regular", UF: "SP", Mun: 3550308, mod: "65",
+	{Razao: "Farmácia Saúde Ltda", CNPJ: cnpj("87832350"), Regime: "regular", UF: "SP", Mun: 3550308, mod: "65",
 		produtos: []produto{
 			{"7891001", "Paracetamol 750mg 20 comp.", "30049045", 12.90},
 			{"7891002", "Dipirona sódica 500mg 10 comp.", "30049099", 6.90},
@@ -115,7 +115,7 @@ var clientes = []cliente{
 			{"7891024", "Água mineral 500ml", "22011000", 3.50},
 			{"7891025", "Bebida isotônica 500ml", "22029900", 6.90},
 		}},
-	{Razao: "Escola Aprender Ltda", CNPJ: cnpj("16180339"), Regime: "regular", UF: "SP", Mun: 3547809, mod: "55",
+	{Razao: "Escola Aprender Ltda", CNPJ: cnpj("81214139"), Regime: "regular", UF: "SP", Mun: 3547809, mod: "55",
 		servicos: []servico{
 			{"080101", "122011100", "Mensalidade berçário/creche", 1450.00},
 			{"080101", "122011200", "Mensalidade pré-escola", 1380.00},
